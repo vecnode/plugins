@@ -29,3 +29,6 @@ iplug_add_plugin(${PROJECT_NAME}
   RESOURCES
     resources/fonts/Roboto-Regular.ttf
 )
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/../scripts/cmake/embed-win-resources.cmake)
+iplug_embed_win_resources(${PROJECT_NAME})

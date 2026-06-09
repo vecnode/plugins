@@ -10,6 +10,8 @@ Dev/
 └── plugins/
     ├── GainPlugin/      # gain effect
     ├── ControlsDemo/    # GUI widgets
+    ├── CamelotSynth/    # embedded sample player (Play / Stop)
+    ├── assets/          # shared audio (gitignored)
     └── scripts/
 ```
 
@@ -23,18 +25,15 @@ code plugins.code-workspace
 ## Build and test in Reaper
 
 ```powershell
-$p = "GainPlugin"   # or ControlsDemo
-.\scripts\build.ps1 -Plugin $p -Format vst3 -Config Release
-Copy-Item -Recurse -Force "$p\build\out\$p.vst3" "$env:LOCALAPPDATA\Programs\Common\VST3\"
-start $p\$p.RPP
+$p = "CamelotSynth"
+.\scripts\build.ps1 -Plugin $p -Format vst3 -Config Release -Install
 ```
 
-Built binary: `Plugin/build/out/Plugin.vst3/Contents/x86_64-win/Plugin.vst3`
-
-Reaper scans `%LOCALAPPDATA%\Programs\Common\VST3\`. Rescan if the plugin does not appear.
+If Reaper has the plugin loaded, install stages to `CamelotSynth.vst3.pending` — close Reaper, then run `install-plugin.ps1` again. Build output: `Plugin/build/out/Plugin.vst3/`.
 
 ## New plugin
 
 ```powershell
 .\scripts\new-plugin.ps1 -Name MySynth -Template IPlugInstrument -Manufacturer Vecnode
 ```
+

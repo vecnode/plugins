@@ -18,6 +18,7 @@ if (-not $OutputRoot) { $OutputRoot = (Resolve-Path (Join-Path $scriptRoot "..")
 if (-not $IPlug2Root) { $IPlug2Root = (Resolve-Path (Join-Path $OutputRoot "..\iPlug2")).Path }
 
 if ($Name -match '\s') { throw "Plugin name cannot contain spaces." }
+if ($Name -match '-') { Write-Warning "Hyphens in '$Name' are invalid in C++ class names. Set PLUG_CLASS_NAME in config.h to a valid identifier (e.g. MyPlugin)." }
 if ($Manufacturer -match '\s') { throw "Manufacturer name cannot contain spaces." }
 
 $duplicatePy = Join-Path $IPlug2Root "Examples\duplicate.py"
@@ -64,6 +65,15 @@ endif()
         $cmake = $cmake -replace 'set\(IPLUG2_DIR "\$\{CMAKE_CURRENT_SOURCE_DIR\}/\.\./\.\."', 'get_filename_component(IPLUG2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../iPlug2" ABSOLUTE)`n  file(TO_CMAKE_PATH "${IPLUG2_DIR}" IPLUG2_DIR)`n  set(IPLUG2_DIR "${IPLUG2_DIR}"'
     }
     Set-Content -Path $cmakeFile -Value $cmake -NoNewline
+}
+
+$embedSnippet = @"
+
+include(`${CMAKE_CURRENT_SOURCE_DIR}/../scripts/cmake/embed-win-resources.cmake)
+iplug_embed_win_resources(`${PROJECT_NAME})
+"@
+if ((Get-Content $cmakeFile -Raw) -notmatch 'iplug_embed_win_resources') {
+    Add-Content -Path $cmakeFile -Value $embedSnippet
 }
 
 Write-Host "`nCreated: $outputPath"

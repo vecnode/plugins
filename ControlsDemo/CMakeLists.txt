@@ -41,3 +41,6 @@ iplug_add_plugin(${PROJECT_NAME}
     resources/img/switch@2x.png
     resources/img/vector-knob.svg
 )
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/../scripts/cmake/embed-win-resources.cmake)
+iplug_embed_win_resources(${PROJECT_NAME})

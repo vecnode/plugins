@@ -1,5 +1,5 @@
 # Build an iPlug2 plugin from this repository.
-# Usage: .\scripts\build.ps1 -Plugin GainPlugin [-Format vst3] [-Config Release]
+# Usage: .\scripts\build.ps1 -Plugin GainPlugin [-Format vst3] [-Config Release] [-Deploy] [-Install]
 
 param(
     [Parameter(Mandatory = $true)]
@@ -13,6 +13,10 @@ param(
 
     [ValidateSet("Debug", "Release", "Tracer")]
     [string]$Config = "Release",
+
+    [switch]$Deploy,
+
+    [switch]$Install,
 
     [string]$IPlug2Root = ""
 )
@@ -41,10 +45,15 @@ switch ($Method) {
 
         Write-Host "Configuring CMake..."
         $iplug2Dir = ($IPlug2Root -replace '\\', '/')
+        $deployFlag = if ($Deploy) { "ON" } else { "OFF" }
+        if (-not $Deploy) {
+            Write-Host "Auto-deploy disabled (use -Deploy to copy into AppData VST3; close Reaper first)."
+        }
         cmake -G "Visual Studio 17 2022" -A x64 `
             -S $pluginDir `
             -B $buildDir `
-            -DIPLUG2_DIR="$iplug2Dir"
+            -DIPLUG2_DIR="$iplug2Dir" `
+            -DIPLUG_DEPLOY_PLUGINS="$deployFlag"
         if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
 
         $target = if ($Format -eq "all") { "ALL_BUILD" } else { "${Plugin}-${Format}" }
@@ -52,7 +61,20 @@ switch ($Method) {
         cmake --build $buildDir --config $Config --target $target
         if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
-        Write-Host "`nArtifacts are under: $pluginDir\build\${Config}"
+        $bundleDir = Join-Path $buildDir "out\${Plugin}.${Format}"
+        if ((Test-Path $bundleDir) -and $Format -in @("vst3", "clap")) {
+            Write-Host "`nBuilt: $bundleDir"
+            if ($Install) {
+                $installScript = Join-Path $scriptRoot "install-plugin.ps1"
+                & $installScript -Plugin $Plugin -Format $Format
+            }
+            else {
+                Write-Host "Install: .\scripts\install-plugin.ps1 -Plugin $Plugin -Format $Format"
+            }
+        }
+        else {
+            Write-Host "`nArtifacts are under: $pluginDir\build\out"
+        }
     }
 
     "vs" {
