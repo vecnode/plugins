@@ -32,3 +32,4 @@ ipch/
 gui/
 
 assets/
+*.wav
