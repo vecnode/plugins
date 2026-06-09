@@ -1,0 +1,19 @@
+{
+  "folders": [
+    {
+      "name": "plugins",
+      "path": "."
+    },
+    {
+      "name": "iPlug2",
+      "path": "../iPlug2"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/build": true,
+      "**/build-win": true,
+      "**/build-mac": true
+    }
+  }
+}
