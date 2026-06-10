@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SampleBuffer.h"
+#include "Smoothers.h"
 #include <atomic>
 
 BEGIN_IPLUG_NAMESPACE
@@ -16,27 +17,47 @@ public:
     mLength = buffer.GetLength();
     mPlayhead.store(0);
     mPlaying.store(false);
+    mPaused.store(false);
     mTriggerPending.store(false);
   }
 
-  void RequestTrigger()
+  void RequestPlay()
   {
+    if (mPaused.load())
+    {
+      mPaused.store(false);
+      mPlaying.store(true);
+      return;
+    }
+
     mTriggerPending.store(true);
+  }
+
+  void RequestPause()
+  {
+    if (!mPlaying.load())
+      return;
+
+    mPlaying.store(false);
+    mPaused.store(true);
+    mTriggerPending.store(false);
   }
 
   void RequestStop()
   {
     mTriggerPending.store(false);
     mPlaying.store(false);
+    mPaused.store(false);
     mPlayhead.store(0);
   }
 
-  void ProcessBlock(sample** outputs, int nOutputs, int nFrames, sample gain)
+  void ProcessBlock(sample** outputs, int nOutputs, int nFrames, sample targetGain, LogParamSmooth<sample, 1>& gainSmoother)
   {
     if (mTriggerPending.exchange(false))
     {
       mPlayhead.store(0);
       mPlaying.store(true);
+      mPaused.store(false);
     }
 
     if (!mPlaying.load() || !mLeft || mLength <= 0)
@@ -49,9 +70,11 @@ public:
       if (playhead >= mLength)
       {
         mPlaying.store(false);
+        mPaused.store(false);
         break;
       }
 
+      const sample gain = gainSmoother.Process(targetGain);
       const sample l = mLeft[playhead] * gain;
       const sample r = (mRight ? mRight[playhead] : l) * gain;
 
@@ -68,12 +91,21 @@ public:
 
   bool IsPlaying() const { return mPlaying.load(); }
 
+  float GetPlayheadNorm() const
+  {
+    if (mLength <= 0)
+      return 0.f;
+
+    return static_cast<float>(mPlayhead.load()) / static_cast<float>(mLength);
+  }
+
 private:
   const sample* mLeft = nullptr;
   const sample* mRight = nullptr;
   int mLength = 0;
   std::atomic<int> mPlayhead {0};
   std::atomic<bool> mPlaying {false};
+  std::atomic<bool> mPaused {false};
   std::atomic<bool> mTriggerPending {false};
 };
 

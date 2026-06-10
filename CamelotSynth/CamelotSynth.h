@@ -2,13 +2,15 @@
 
 #include "IPlug_include_in_plug_hdr.h"
 #include "IControls.h"
+#include <vector>
 
 const int kNumPresets = 1;
 
 enum EMsgTags
 {
   kMsgPlaySample = 0x7101,
-  kMsgStopSample = 0x7102
+  kMsgStopSample = 0x7102,
+  kMsgPauseSample = 0x7103
 };
 
 enum EParams
@@ -20,11 +22,13 @@ enum EParams
 #if IPLUG_DSP
 #include "SampleBuffer.h"
 #include "SamplePlayer.h"
+#include "Smoothers.h"
 #endif
 
 enum EControlTags
 {
   kCtrlTagMeter = 0,
+  kCtrlTagWaveform = 1,
   kNumCtrlTags
 };
 
@@ -50,5 +54,9 @@ private:
   SampleBuffer mSampleBuffer;
   SamplePlayer mSamplePlayer;
   IPeakAvgSender<2> mMeterSender;
+  LogParamSmooth<sample, 1> mGainSmoother;
 #endif
+
+  std::vector<float> mWaveformPeaks;
+  bool mWaveformPeaksDirty = false;
 };
