@@ -27,6 +27,7 @@ code plugins.code-workspace
 ```powershell
 $p = "CamelotSynth"
 .\scripts\build.ps1 -Plugin $p -Format vst3 -Config Release -Install
+.\scripts\install-plugin.ps1 -Plugin $p -Format vst3
 ```
 
 If Reaper has the plugin loaded, install stages to `CamelotSynth.vst3.pending` — close Reaper, then run `install-plugin.ps1` again. Build output: `Plugin/build/out/Plugin.vst3/`.
