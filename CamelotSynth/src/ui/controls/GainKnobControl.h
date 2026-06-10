@@ -1,11 +1,11 @@
 #pragma once
 
 #include "IControls.h"
-#include "UiRedraw.h"
+#include "UiPaintPolicy.h"
 
 BEGIN_IGRAPHICS_NAMESPACE
 
-/** Gain knob that triggers full-window repaint on drag (avoids partial FBO trails). */
+/** Gain knob: real-time label + DSP during drag, full-window repaint to avoid FBO trails. */
 class GainKnobControl : public IVKnobControl
 {
 public:
@@ -16,15 +16,15 @@ public:
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
+    BeginInteraction();
     IVKnobControl::OnMouseDown(x, y, mod);
     RequestFullRepaint(GetUI());
   }
 
   void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
   {
-    double gearing = IsFineControl(mod, false) ? mGearing * 10.0 : mGearing;
-
-    IRECT dragBounds = GetKnobDragBounds();
+    const double gearing = IsFineControl(mod, false) ? mGearing * 10.0 : mGearing;
+    const IRECT dragBounds = GetKnobDragBounds();
 
     if (mDirection == EDirection::Vertical)
       mMouseDragValue += static_cast<double>(dY / static_cast<double>(dragBounds.T - dragBounds.B) / gearing);
@@ -41,6 +41,11 @@ public:
     }
 
     SetValue(v);
+    RefreshValueLabel(v);
+
+    if (GetParamIdx() > kNoParameter)
+      GetDelegate()->SendParameterValueFromUI(GetParamIdx(), v);
+
     SetDirty(false);
     RequestFullRepaint(GetUI());
   }
@@ -48,7 +53,15 @@ public:
   void OnMouseUp(float x, float y, const IMouseMod& mod) override
   {
     IVKnobControl::OnMouseUp(x, y, mod);
+    EndInteraction();
     RequestFullRepaint(GetUI());
+  }
+
+private:
+  void RefreshValueLabel(double normalizedValue)
+  {
+    if (const IParam* pParam = GetParam())
+      pParam->GetDisplay(normalizedValue, true, mValueStr);
   }
 };
 

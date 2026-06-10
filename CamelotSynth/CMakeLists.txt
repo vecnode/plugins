@@ -27,18 +27,27 @@ endif()
 include(${IPLUG2_DIR}/iPlug2.cmake)
 find_package(iPlug2 REQUIRED)
 
+set(_camelot_src_modules
+  src/dsp/SampleBuffer.h
+  src/dsp/SamplePlayer.h
+  src/model/WaveformEnvelope.h
+  src/ui/bridge/UiPlayheadBridge.h
+  src/ui/bridge/UiPaintPolicy.h
+  src/ui/controls/WaveformControl.h
+  src/ui/controls/PlayheadOverlayControl.h
+  src/ui/controls/GainKnobControl.h
+  src/ui/controls/CamelotNoteCircleControl.h
+  src/editor/Layout.h
+  src/editor/Styles.h
+  src/editor/Attach.h
+)
+
 iplug_add_plugin(${PROJECT_NAME}
   SOURCES
     CamelotSynth.cpp
     CamelotSynth.h
     CamelotSynthEditor.h
-    src/SampleBuffer.h
-    src/SamplePlayer.h
-    src/WaveformEnvelope.h
-    src/WaveformControl.h
-    src/GainKnobControl.h
-    src/UiPlayheadBridge.h
-    src/UiRedraw.h
+    ${_camelot_src_modules}
     resources/resource.h
   DEFINES
     IGRAPHICS_DISABLE_VSYNC
@@ -47,10 +56,17 @@ iplug_add_plugin(${PROJECT_NAME}
     resources/audio/AtmosSynth1_Dmaj.wav
 )
 
-# Headers under src/ are included as "src/Filename.h" from the plugin root.
+set(_camelot_include_dirs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/model
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/bridge
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/controls
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/editor
+)
+
 foreach(_fmt vst3 vst2 clap aax app)
   if(TARGET ${PROJECT_NAME}-${_fmt})
-    target_include_directories(${PROJECT_NAME}-${_fmt} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_include_directories(${PROJECT_NAME}-${_fmt} PRIVATE ${_camelot_include_dirs})
   endif()
 endforeach()
 

@@ -1,52 +1,62 @@
 #pragma once
 
 #include "IControls.h"
-#include "UiRedraw.h"
+#include "PlayheadOverlayControl.h"
+#include "UiPaintPolicy.h"
 #include <algorithm>
 #include <functional>
 #include <vector>
 
 BEGIN_IGRAPHICS_NAMESPACE
 
-/**
- * Interactive waveform with click/drag seek.
- * Envelope is drawn directly each frame (no ILayer cache) so moving overlays
- * never leave stale pixels when combined with full-window repaint policy.
- */
-class SampleWaveformControl : public IControl
+/** Static waveform envelope + scrub interaction (playhead is a separate overlay). */
+class WaveformTrackControl : public IControl
 {
 public:
   using SeekHandler = std::function<void(float normalizedPosition)>;
 
-  SampleWaveformControl(const IRECT& bounds, SeekHandler onSeek, int ctrlTag = kNoTag)
+  WaveformTrackControl(const IRECT& bounds, SeekHandler onSeek, int ctrlTag = kNoTag)
   : IControl(bounds, ctrlTag)
   , mOnSeek(std::move(onSeek))
   {
     mIgnoreMouse = false;
   }
 
+  void SetPlayheadOverlay(PlayheadOverlayControl* pOverlay)
+  {
+    mPlayheadOverlay = pOverlay;
+    if (mPlayheadOverlay)
+      mPlayheadOverlay->SetPlotBounds(PlotBounds());
+  }
+
   void SetEnvelope(const std::vector<float>& maxPeaks, const std::vector<float>& minPeaks)
   {
     mMax = maxPeaks;
     mMin = minPeaks;
+    if (mLayer)
+      mLayer->Invalidate();
     SetDirty(false);
+    RequestFullRepaint(GetUI());
   }
 
   void SyncPlayheadFromDSP(float normPos)
   {
-    SetPlayheadInternal(normPos, false);
+    if (mPlayheadOverlay)
+      mPlayheadOverlay->SetNormalizedPosition(normPos);
   }
 
   void OnResize() override
   {
+    if (mLayer)
+      mLayer->Invalidate();
+    if (mPlayheadOverlay)
+      mPlayheadOverlay->SetPlotBounds(PlotBounds());
     SetDirty(false);
   }
 
   void Draw(IGraphics& g) override
   {
-    const IRECT plot = PlotBounds();
-    DrawStaticContent(g, plot);
-    DrawPlayhead(g, plot, mPlayhead);
+    DrawStaticContent(g, PlotBounds());
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
@@ -54,6 +64,7 @@ public:
     if (!PlotBounds().Contains(x, y))
       return;
 
+    BeginInteraction();
     mScrubbing = true;
     SeekAt(x);
   }
@@ -69,12 +80,30 @@ public:
   void OnMouseUp(float x, float y, const IMouseMod& mod) override
   {
     mScrubbing = false;
+    EndInteraction();
+    if (mLayer)
+      mLayer->Invalidate();
+    SetDirty(false);
+    RequestFullRepaint(GetUI());
   }
 
-private:
   IRECT PlotBounds() const
   {
     return mRECT.GetPadded(-6.f);
+  }
+
+private:
+  void SeekAt(float x)
+  {
+    const float norm = NormalizedX(x);
+    if (mPlayheadOverlay)
+      mPlayheadOverlay->SetNormalizedPosition(norm);
+
+    if (mOnSeek)
+      mOnSeek(norm);
+
+    SetDirty(false);
+    RequestFullRepaint(GetUI());
   }
 
   float NormalizedX(float x) const
@@ -84,31 +113,6 @@ private:
       return 0.f;
 
     return (std::max)(0.f, (std::min)(1.f, (x - plot.L) / plot.W()));
-  }
-
-  void SeekAt(float x)
-  {
-    const float norm = NormalizedX(x);
-    SetPlayheadInternal(norm, true);
-
-    if (mOnSeek)
-      mOnSeek(norm);
-  }
-
-  void SetPlayheadInternal(float normPos, bool fromUser)
-  {
-    const float clamped = (std::max)(0.f, (std::min)(1.f, normPos));
-    const IRECT plot = PlotBounds();
-    const float pixelNorm = plot.W() > 1.f ? 1.f / plot.W() : 1.f;
-
-    if (!fromUser && std::fabs(clamped - mPlayhead) < pixelNorm)
-      return;
-
-    mPlayhead = clamped;
-    SetDirty(false);
-
-    if (fromUser)
-      RequestFullRepaint(GetUI());
   }
 
   void DrawStaticContent(IGraphics& g, const IRECT& plot)
@@ -126,7 +130,20 @@ private:
     if (mMax.size() < 2 || mMin.size() != mMax.size())
       return;
 
-    DrawEnvelope(g, plot, fill, outline);
+    if (mScrubbing)
+    {
+      DrawEnvelope(g, plot, fill, outline);
+      return;
+    }
+
+    if (!g.CheckLayer(mLayer))
+    {
+      g.StartLayer(this, mRECT);
+      DrawEnvelope(g, plot, fill, outline);
+      mLayer = g.EndLayer();
+    }
+
+    g.DrawLayer(mLayer);
   }
 
   void DrawEnvelope(IGraphics& g, const IRECT& plot, const IColor& fill, const IColor& outline) const
@@ -152,17 +169,15 @@ private:
     g.PathStroke(outline, 1.f);
   }
 
-  void DrawPlayhead(IGraphics& g, const IRECT& plot, float normPos) const
-  {
-    const float playX = plot.L + normPos * plot.W();
-    g.DrawLine(IColor(255, 88, 88), playX, plot.T, playX, plot.B, nullptr, 1.5f);
-  }
-
   SeekHandler mOnSeek;
+  PlayheadOverlayControl* mPlayheadOverlay = nullptr;
   std::vector<float> mMax;
   std::vector<float> mMin;
-  float mPlayhead = 0.f;
+  ILayerPtr mLayer;
   bool mScrubbing = false;
 };
+
+// Backward-compatible alias used by CamelotSynth.cpp
+using SampleWaveformControl = WaveformTrackControl;
 
 END_IGRAPHICS_NAMESPACE

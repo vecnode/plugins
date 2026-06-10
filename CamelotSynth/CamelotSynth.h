@@ -1,6 +1,6 @@
 #pragma once
 
-// Plugin entry + DSP/editor glue. Implementation modules live under src/.
+// Plugin entry — implementation modules under src/ (see src/ARCHITECTURE.md).
 #include "IPlug_include_in_plug_hdr.h"
 #include "IControls.h"
 #include <vector>
@@ -22,17 +22,18 @@ enum EParams
 };
 
 #if IPLUG_DSP
-#include "src/SampleBuffer.h"
-#include "src/SamplePlayer.h"
+#include "SampleBuffer.h"
+#include "SamplePlayer.h"
 #include "Smoothers.h"
-#include "src/WaveformEnvelope.h"
-#include "src/UiPlayheadBridge.h"
+#include "WaveformEnvelope.h"
+#include "UiPlayheadBridge.h"
 #endif
 
 enum EControlTags
 {
   kCtrlTagMeter = 0,
   kCtrlTagWaveform = 1,
+  kCtrlTagPlayhead = 2,
   kNumCtrlTags
 };
 

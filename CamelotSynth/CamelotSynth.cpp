@@ -1,6 +1,6 @@
 #include "CamelotSynth.h"
 #include "CamelotSynthEditor.h"
-#include "src/WaveformControl.h"
+#include "WaveformControl.h"
 #include "IPlug_include_in_plug_src.h"
 
 namespace
@@ -46,7 +46,7 @@ void CamelotSynth::OnIdle()
   mMeterSender.TransmitData(*this);
 
 #if IPLUG_EDITOR
-  // Playhead sync runs on the ~50 Hz idle timer; full-window repaint policy is in src/UiRedraw.h.
+  // Playhead sync runs on the ~50 Hz idle timer; paint policy in src/ui/bridge/UiPaintPolicy.h.
   if (auto* pGraphics = GetUI())
   {
     if (auto* pWaveform = pGraphics->GetControlWithTag(kCtrlTagWaveform))
