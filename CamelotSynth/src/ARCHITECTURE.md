@@ -27,7 +27,7 @@ CamelotSynth/
     │       ├── WaveformControl.h      WaveformTrackControl (+ SampleWaveformControl alias)
     │       ├── PlayheadOverlayControl.h
     │       ├── GainKnobControl.h
-    │       └── CamelotNoteCircleControl.h
+    │       └── CamelotCircleControl.h
     └── editor/
         ├── Layout.h          Region computation from plugin bounds
         ├── Styles.h          Panel colours and IVStyle presets
@@ -47,7 +47,7 @@ Regions are computed top-to-bottom inside padded content (`Layout.h`):
 | Meter strip | 44 px wide, right edge | `IVLEDMeterControl<2>` (`kCtrlTagMeter`) |
 | Tab bar | 40 px | Placeholder tab switch |
 | Transport | 56 px | Play, Pause, Stop |
-| Middle | Remaining centre | 360 px Camelot circle; gain knob bottom-right |
+| Middle | Remaining centre | 460 px Camelot circle; gain knob bottom-right |
 | Wave section | 210 px | Label + waveform track |
 
 Control z-order in `Attach.h`: background panel → meter → chrome → note circle → gain → waveform **track** → playhead **overlay** (overlay must be attached after the track).
@@ -103,9 +103,12 @@ WaveformEnvelope                      ProcessBlock → outputs
 
 - Extends `IVKnobControl`: live label via `GetDisplay`, `SendParameterValueFromUI` during drag, full repaint on interaction.
 
-### `CamelotNoteCircleControl`
+### `CamelotCircle`
 
-- Decorative 12-spoke Camelot wheel with two zone rings (static, no DSP coupling).
+- **LineLayout** — spoke angles and zone ring radii (the visible grid).
+- **BlockRegion** — 36 cells computed from that layout (`BuildBlockRegions`); each stores angle/radius bounds and `ContainsPoint`.
+- **Draw** — base disc, highlight fill on hovered/pressed block, then grid lines on top. Fills use the same `PointAtAngle` tessellation as hit-testing (not `PathArc`, which misaligns by 90°).
+- Public accessors: `GetLineLayout()`, `GetBlock(spoke, zone)`, `GetBlocks()`.
 
 ---
 
@@ -141,7 +144,7 @@ CamelotSynth addresses this at three levels:
 ### 3. Framework — strict-mode full paint (`IGraphics.cpp`)
 
 - **`IsDirty()`** — when `SetStrictDrawing(true)`, replaces per-control dirty rectangles with a single `GetBounds()` entry (one full `InvalidateRect`).
-- **`Draw(IRECTList)`** — in strict mode, always calls `Draw(GetBounds())`, not `rects.Bounds()` from `WM_PAINT`. Windows update regions can be smaller than the plugin; drawing must cover the full surface every tick.
+- **`Draw(IRECTList)`** — full `GetBounds()` while `IsInteracting()` (drag/scrub); otherwise `rects.Bounds()` for lightweight control updates (CamelotCircle hover). Hook: `IGraphicsRepaintPolicy.h`.
 
 **Editor open:** `Attach.h`, `OnUIOpen`, and the first `OnIdle` call `ForceInitialFullPaint` so the first frame is correct before user input.
 
@@ -151,11 +154,11 @@ CamelotSynth addresses this at three levels:
 
 1. Include `UiPaintPolicy.h`.
 2. On pointer down: `BeginInteraction()`; on up: `EndInteraction()`.
-3. After changing anything visible: `SetDirty(false)` on the control, then `RequestFullRepaint(GetUI())`.
+3. Drag/scrub: `RequestFullRepaint(GetUI())`. Hover-only (CamelotCircle): `RequestControlRepaint(this)`.
 4. Keep `mRECT` stable for overlays — do not call `SetTargetAndDrawRECTs` with a moving sub-rect.
 5. Do not cache moving content in `ILayer` if another control draws on top of the same area.
 
-Reference implementations: `GainKnobControl`, `WaveformTrackControl`, `PlayheadOverlayControl`.
+Reference implementations: `GainKnobControl`, `WaveformTrackControl`, `PlayheadOverlayControl`, `CamelotCircle` (hover only — no `BeginInteraction` unless pointer down).
 
 ---
 

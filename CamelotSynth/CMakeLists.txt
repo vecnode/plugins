@@ -36,7 +36,7 @@ set(_camelot_src_modules
   src/ui/controls/WaveformControl.h
   src/ui/controls/PlayheadOverlayControl.h
   src/ui/controls/GainKnobControl.h
-  src/ui/controls/CamelotNoteCircleControl.h
+  src/ui/controls/CamelotCircleControl.h
   src/editor/Layout.h
   src/editor/Styles.h
   src/editor/Attach.h

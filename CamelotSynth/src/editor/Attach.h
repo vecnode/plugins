@@ -6,7 +6,7 @@
 #include "GainKnobControl.h"
 #include "WaveformControl.h"
 #include "PlayheadOverlayControl.h"
-#include "CamelotNoteCircleControl.h"
+#include "CamelotCircleControl.h"
 #include "UiPaintPolicy.h"
 
 namespace CamelotSynthEditor
@@ -61,8 +61,13 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
   }, "Stop", buttonStyle.WithLabelText({15.f, EVAlign::Middle}), true, true, EVShape::Rectangle));
 
   pGraphics->AttachControl(new IPanelControl(layout.middle, PanelColor(), false));
-  pGraphics->AttachControl(new ::igraphics::CamelotNoteCircleControl(
-    layout.noteCircle, NoteCircleFillColor(), NoteCircleLineColor(), 2.5f));
+  pGraphics->AttachControl(new ::igraphics::CamelotCircle(
+    layout.noteCircle,
+    NoteCircleFillColor(),
+    CamelotBlockHoverColor(),
+    CamelotBlockPressedColor(),
+    NoteCircleLineColor(),
+    2.5f));
   pGraphics->AttachControl(new ::igraphics::GainKnobControl(layout.gain, kParamGain, "Gain", controlStyle));
 
   pGraphics->AttachControl(new IPanelControl(layout.waveSection, PanelColor(), true));

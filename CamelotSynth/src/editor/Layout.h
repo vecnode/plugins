@@ -14,7 +14,7 @@ struct LayoutConstants
   static constexpr float kTransportHeight = 56.f;
   static constexpr float kWaveSectionHeight = 210.f;
   static constexpr float kGainKnobSize = 96.f;
-  static constexpr float kNoteCircleDiameter = 360.f;
+  static constexpr float kNoteCircleDiameter = 460.f;
 };
 
 struct Regions

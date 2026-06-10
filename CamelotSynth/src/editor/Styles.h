@@ -20,6 +20,16 @@ inline IColor NoteCircleLineColor()
   return IColor(168, 174, 186);
 }
 
+inline IColor CamelotBlockHoverColor()
+{
+  return IColor(118, 124, 136);
+}
+
+inline IColor CamelotBlockPressedColor()
+{
+  return IColor(150, 156, 170);
+}
+
 inline IVStyle ControlStyle()
 {
   return DEFAULT_STYLE
