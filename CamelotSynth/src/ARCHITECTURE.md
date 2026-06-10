@@ -16,7 +16,8 @@ CamelotSynth/
 └── src/
     ├── dsp/                  Real-time audio (no IGraphics)
     │   ├── SampleBuffer.h    Decode embedded WAV; hold interleaved channel pointers
-    │   └── SamplePlayer.h    Play / pause / stop / seek; atomic playhead
+    │   ├── SamplePlayer.h    Play / pause / stop / scheduled seek; dip-through-silence
+    │   └── SampleTransport.h Buffer + player facade; sample-accurate transport/seek
     ├── model/                Derived, non-real-time display data
     │   └── WaveformEnvelope.h  Min/max peak buckets for waveform drawing
     ├── ui/
@@ -76,7 +77,7 @@ WaveformEnvelope                      ProcessBlock → outputs
 
 - **DSP thread:** `ProcessBlock` reads gain (smoothed), mixes the sample into outputs, sends meter peaks.
 - **UI thread:** `OnIdle` transmits meter data, pushes envelope updates when the sample reloads, and syncs playhead position while playing or after transport/seek.
-- **Cross-thread UI → DSP:** `SendArbitraryMsgFromUI` with `EMsgTags` (`kMsgPlaySample`, `kMsgPauseSample`, `kMsgStopSample`, `kMsgSeekSample`). Handled in `OnMessage` on the audio thread.
+- **Cross-thread UI → DSP:** hidden meta parameters (`kParamTrigPlay`, `kParamTrigPause`, `kParamTrigStop`, `kParamSeek`) via `SendParameterValueFromUI`. `OnParamChange` schedules transport and seek with the host-provided `sampleOffset` so events land sample-accurately inside the current `ProcessBlock`. Avoid `SendArbitraryMsgFromUI` for transport — host messaging can add large latency.
 
 `UiPlayheadBridge` holds two flags:
 
@@ -85,12 +86,64 @@ WaveformEnvelope                      ProcessBlock → outputs
 
 ---
 
+## Sample transport and seek (de-clicking)
+
+### Why clicks happened
+
+1. **Immediate seek application** — seeks must use `sampleOffset` and apply inside `ProcessBlock`, not mid-call from `OnParamChange`.
+2. **Crossfade restart on every drag event** — resetting the fade timer and jumping the outgoing head causes a level mismatch at the splice point.
+3. **Dip-through-silence** — fading to zero between unrelated buffer regions produces an audible gap that sounds like a click on every reposition.
+4. **Audible seeks while paused / during transport fades** — `mPlaying` stays true during pause/stop fades, so seeks could still trigger audible splices when the user expects silence.
+5. **Mouse-down DSP commit** — sending `kParamSeek` on press (before release) triggers audio on the initial click even when the user only wanted to preview the target.
+
+### Architecture
+
+```
+UI (WaveformTrackControl)
+      │  mouse down  → overlay preview only (no kParamSeek)
+      │  mouse drag  → SendParameterValueFromUI(kParamSeek, norm)
+      │  mouse up    → single kParamSeek if click without drag
+      ▼
+OnParamChange (audio thread, sampleOffset)
+      │  SampleTransport::ScheduleSeek(norm, offset)
+      ▼
+SamplePlayer — atomic pending seek (latest norm wins)
+      │  ApplyScheduledSeekAt(sampleIndex) inside ProcessBlock
+      ├── not actively playing  → silent seek (position only, no output)
+      └── actively playing      → retargetable linear crossfade
+```
+
+### Audible vs silent seeks (`SamplePlayer`)
+
+**Silent** (position update only, limiter/output state cleared, no splice):
+
+- Transport is paused or stopped (`!ShouldAudiblySeek()`).
+- Transport fade is active (pause/stop/play fade in progress).
+
+**Audible** (20 ms linear dual-head crossfade):
+
+- `mPlaying && !mPaused &&` transport fade is idle.
+- Outgoing head is seeded from `CurrentAudiblePosition()` (last rendered sample, not the next read index).
+- Rapid scrub **retargets** `mIncomingReadFrac` only — fade progress and outgoing head are never restarted.
+- Linear weights (`gOut = 1 − t`, `gIn = t`) keep summed gain at unity.
+- Limiter resets at crossfade start so a post-splice peak does not slam gain down.
+
+Seek positions map directly into the loaded `SampleBuffer` (`mReadHeadFrac` / `mIncomingReadFrac` are fractional indices into `mLeft` / `mRight`). Scrubbing while playing crossfades from the old buffer region to the new one; paused/stopped seeks update that index silently for the next play.
+
+**Play** always starts from the current `mReadHeadFrac` (set by the last silent or audible seek). **Stop** while already idle is a silent no-op (no transport fade, so pressing Stop at position 0 does not click). Stop while playing fades out, then resets the playhead to 0.
+
+### Tuning
+
+Seek crossfade length is `kSeekCrossfadeMs` in `SamplePlayer.h` (20 ms default). Transport play/pause/stop uses the 12 ms equal-power fade (`kTransportFadeMs`).
+
+---
+
 ## Custom controls
 
 ### `WaveformTrackControl` (`WaveformControl.h`)
 
 - Draws the envelope path every frame (no `ILayer` cache — avoids stale pixels during drag).
-- Mouse down/drag calls the seek handler and moves the linked playhead overlay.
+- Mouse down previews the playhead overlay only; drag and click-release commit `kParamSeek` to the DSP.
 - Uses `BeginInteraction` / `EndInteraction` and `RequestFullRepaint` from `UiPaintPolicy.h`.
 
 ### `PlayheadOverlayControl`
@@ -190,6 +243,6 @@ Output: `%LOCALAPPDATA%\Programs\Common\VST3\CamelotSynth.vst3`. Close the host 
 ## Extension notes
 
 - New parameters: add to `EParams`, init in the constructor, attach controls in `Attach.h`.
-- New UI → DSP actions: add an `EMsgTags` value and handle it in `OnMessage`; optionally extend `UiPlayheadBridge` if the editor needs deferred sync.
+- New UI → DSP actions: prefer hidden meta parameters scheduled in `OnParamChange` with `sampleOffset`; optionally extend `UiPlayheadBridge` if the editor needs deferred sync.
 - New animated or draggable controls: call `RequestFullRepaint(GetUI())` after mutating state; use the paint policy rather than relying on per-control dirty rects alone on Windows.
 - Sample asset: copied at configure time from `../assets/` into `resources/audio/`; loaded via `SampleBuffer::LoadEmbedded` using `gHINSTANCE` (not `GetModuleHandle(nullptr)`).

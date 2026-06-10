@@ -10,7 +10,13 @@
 
 BEGIN_IPLUG_NAMESPACE
 
-/** One-shot sample playback with interpolated reads and dual-playhead seek crossfades. */
+/**
+ * One-shot sample playback with interpolated reads.
+ *
+ * Seeks while actively playing use a retargetable linear dual-head crossfade
+ * (outgoing head never restarts on rapid scrub). Seeks while paused, stopped,
+ * or during transport fades are silent position updates with no audio output.
+ */
 class SamplePlayer
 {
 public:
@@ -26,7 +32,7 @@ public:
   {
     mSampleRate = sampleRate > 0. ? sampleRate : 44100.;
     mSeekCrossfadeSamples = static_cast<int>(std::ceil(mSampleRate * kSeekCrossfadeMs * 0.001));
-    mSeekCrossfadeSamples = (std::max)(mSeekCrossfadeSamples, 256);
+    mSeekCrossfadeSamples = (std::max)(mSeekCrossfadeSamples, 128);
     mTransportFadeSamples = static_cast<int>(std::ceil(mSampleRate * kTransportFadeMs * 0.001));
     mTransportFadeSamples = (std::max)(mTransportFadeSamples, 32);
     mLimiter.SetSampleRate(mSampleRate);
@@ -41,7 +47,6 @@ public:
     mPlayhead.store(0);
     mPlaying.store(false);
     mPaused.store(false);
-    mTriggerPending.store(false);
     mTransportFadeRemaining = 0;
     mTransportFadeTotal = 0;
     mTransportFadeDirection = TransportFadeDirection::None;
@@ -52,6 +57,7 @@ public:
     mLastOutR = 0.f;
     mLimiter.Reset();
     ClearSchedule();
+    ClearScheduledSeek();
   }
 
   void ScheduleCommand(ScheduledCommand command, int sampleOffset)
@@ -60,17 +66,30 @@ public:
     mScheduledOffset.store(sampleOffset < 0 ? 0 : sampleOffset);
   }
 
+  /** Queue a seek for sample-accurate application inside ProcessBlock. */
+  void ScheduleSeek(float norm, int sampleOffset)
+  {
+    mScheduledSeekNorm.store(norm);
+    mScheduledSeekOffset.store(sampleOffset < 0 ? 0 : sampleOffset);
+    mScheduledSeekPending.store(true);
+  }
+
   void RequestPlay()
   {
-    if (mPaused.load())
-    {
-      mPaused.store(false);
-      mPlaying.store(true);
-      BeginTransportFadeIn();
+    if (mPlaying.load() && !mPaused.load()
+        && mTransportFadeDirection == TransportFadeDirection::None
+        && mSeekCrossfadeRemaining <= 0)
       return;
-    }
 
-    mTriggerPending.store(true);
+    EndSeekCrossfade();
+    mPaused.store(false);
+    mPlaying.store(true);
+    mAfterTransportFade = AfterTransportFade::None;
+    mLastOutL = 0.f;
+    mLastOutR = 0.f;
+    mLimiter.Reset();
+    mPlayhead.store(static_cast<int>(mReadHeadFrac));
+    BeginTransportFadeIn();
   }
 
   void RequestPause()
@@ -80,55 +99,29 @@ public:
 
     CommitSeekCrossfadePosition();
     mAfterTransportFade = AfterTransportFade::Pause;
-    mTriggerPending.store(false);
     BeginTransportFadeOut();
   }
 
   void RequestStop()
   {
-    mTriggerPending.store(false);
-    mAfterTransportFade = AfterTransportFade::Stop;
     CommitSeekCrossfadePosition();
-    BeginTransportFadeOut();
-  }
 
-  void SeekToNormalized(float norm)
-  {
-    if (!mLeft || mLength <= 0)
-      return;
-
-    const double pos = NormalizedToPosition(norm);
-    mPlayhead.store(static_cast<int>(pos));
-
-    if (ShouldCrossfadeSeek())
+    if (!mPlaying.load() && mSeekCrossfadeRemaining <= 0)
     {
-      BeginSeekCrossfade(pos);
+      FinishStopImmediate();
       return;
     }
 
-    EndSeekCrossfade();
-    mReadHeadFrac = pos;
-    mPaused.store(pos > 0.5);
-    mOutputGain = 0.f;
-    mTransportFadeDirection = TransportFadeDirection::None;
+    mAfterTransportFade = AfterTransportFade::Stop;
+    BeginTransportFadeOut();
   }
 
   void ProcessBlock(sample** outputs, int nOutputs, int nFrames, sample targetGain, LogParamSmooth<sample, 1>& gainSmoother)
   {
-    if (mTriggerPending.exchange(false))
-    {
-      mReadHeadFrac = 0.;
-      mPlayhead.store(0);
-      mPlaying.store(true);
-      mPaused.store(false);
-      mAfterTransportFade = AfterTransportFade::None;
-      EndSeekCrossfade();
-      BeginTransportFadeIn();
-    }
-
     for (int s = 0; s < nFrames; s++)
     {
       ApplyScheduledCommandAt(s);
+      ApplyScheduledSeekAt(s);
       AdvanceTransportFade();
 
       if (!IsAudible() || !mLeft || mLength <= 0)
@@ -185,9 +178,10 @@ public:
   }
 
 private:
-  static constexpr double kSeekCrossfadeMs = 72.;
+  static constexpr double kSeekCrossfadeMs = 20.;
   static constexpr double kTransportFadeMs = 12.;
   static constexpr double kHalfPi = 1.5707963267948966;
+  static constexpr double kSeekEpsilon = 0.5;
 
   enum class TransportFadeDirection : uint8_t
   {
@@ -203,15 +197,17 @@ private:
     Stop
   };
 
-  bool ShouldCrossfadeSeek() const
+  bool IsAudible() const
   {
-    return mPlaying.load() || mPaused.load() || mSeekCrossfadeRemaining > 0
+    return mPlaying.load() || mSeekCrossfadeRemaining > 0
         || mTransportFadeDirection != TransportFadeDirection::None;
   }
 
-  bool IsAudible() const
+  bool ShouldAudiblySeek() const
   {
-    return mPlaying.load() || mSeekCrossfadeRemaining > 0 || mTransportFadeDirection != TransportFadeDirection::None;
+    return mPlaying.load()
+        && !mPaused.load()
+        && mTransportFadeDirection == TransportFadeDirection::None;
   }
 
   double NormalizedToPosition(float norm) const
@@ -253,6 +249,13 @@ private:
     mScheduledOffset.store(0);
   }
 
+  void ClearScheduledSeek()
+  {
+    mScheduledSeekPending.store(false);
+    mScheduledSeekNorm.store(0.f);
+    mScheduledSeekOffset.store(0);
+  }
+
   void EndSeekCrossfade()
   {
     mSeekCrossfadeRemaining = 0;
@@ -271,25 +274,68 @@ private:
     EndSeekCrossfade();
   }
 
-  void BeginSeekCrossfade(double targetPos)
+  double CurrentAudiblePosition() const
   {
     if (mSeekCrossfadeRemaining > 0)
-      mOutgoingReadFrac = mIncomingReadFrac;
-    else
-      mOutgoingReadFrac = mReadHeadFrac;
+      return mOutgoingReadFrac;
 
+    return (std::max)(0., mReadHeadFrac - 1.);
+  }
+
+  void ApplySilentSeek(double pos)
+  {
+    EndSeekCrossfade();
+    mReadHeadFrac = pos;
+    mLastOutL = 0.f;
+    mLastOutR = 0.f;
+    mLimiter.Reset();
+  }
+
+  void QueueAudibleSeek(double targetPos)
+  {
+    if (std::fabs(targetPos - CurrentAudiblePosition()) < kSeekEpsilon)
+      return;
+
+    if (mSeekCrossfadeRemaining > 0)
+    {
+      mIncomingReadFrac = targetPos;
+      return;
+    }
+
+    mOutgoingReadFrac = CurrentAudiblePosition();
     mIncomingReadFrac = targetPos;
     mSeekCrossfadeRemaining = mSeekCrossfadeSamples;
-    mAfterTransportFade = AfterTransportFade::None;
-    mTransportFadeDirection = TransportFadeDirection::None;
-    mOutputGain = 1.f;
+    mLimiter.Reset();
+  }
+
+  void ApplyScheduledSeekAt(int sampleIndex)
+  {
+    if (!mScheduledSeekPending.load())
+      return;
+
+    if (mScheduledSeekOffset.load() != sampleIndex)
+      return;
+
+    mScheduledSeekPending.store(false);
+
+    const float norm = mScheduledSeekNorm.load();
+    const double pos = NormalizedToPosition(norm);
+    mPlayhead.store(static_cast<int>(pos));
+
+    if (!ShouldAudiblySeek())
+    {
+      ApplySilentSeek(pos);
+      return;
+    }
+
+    QueueAudibleSeek(pos);
   }
 
   void RenderSeekCrossfadeSample(sample& outL, sample& outR)
   {
     const float t = 1.f - static_cast<float>(mSeekCrossfadeRemaining) / static_cast<float>(mSeekCrossfadeSamples);
-    const float gOut = EqualPowerGainOut(t);
-    const float gIn = EqualPowerGainIn(t);
+    const float gOut = 1.f - t;
+    const float gIn = t;
 
     const sample oldL = ReadChannel(mLeft, mOutgoingReadFrac);
     const sample oldR = ReadChannel(mRight ? mRight : mLeft, mOutgoingReadFrac);
@@ -389,29 +435,37 @@ private:
     }
   }
 
+  void FinishStopImmediate()
+  {
+    mPlaying.store(false);
+    mPaused.store(false);
+    mReadHeadFrac = 0.;
+    mPlayhead.store(0);
+    mOutputGain = 0.f;
+    mLastOutL = 0.f;
+    mLastOutR = 0.f;
+    mAfterTransportFade = AfterTransportFade::None;
+    mTransportFadeDirection = TransportFadeDirection::None;
+    mTransportFadeRemaining = 0;
+    EndSeekCrossfade();
+    mLimiter.Reset();
+    ClearSchedule();
+  }
+
   void CompleteTransportFadeOut()
   {
     mOutputGain = 0.f;
 
-    switch (mAfterTransportFade)
+    if (mAfterTransportFade == AfterTransportFade::Stop)
     {
-      case AfterTransportFade::Pause:
-        mPlaying.store(false);
-        mPaused.store(true);
-        break;
+      FinishStopImmediate();
+      return;
+    }
 
-      case AfterTransportFade::Stop:
-        mPlaying.store(false);
-        mPaused.store(false);
-        mReadHeadFrac = 0.;
-        mPlayhead.store(0);
-        mLastOutL = 0.f;
-        mLastOutR = 0.f;
-        ClearSchedule();
-        break;
-
-      default:
-        break;
+    if (mAfterTransportFade == AfterTransportFade::Pause)
+    {
+      mPlaying.store(false);
+      mPaused.store(true);
     }
 
     mAfterTransportFade = AfterTransportFade::None;
@@ -422,7 +476,7 @@ private:
   const sample* mRight = nullptr;
   int mLength = 0;
   double mSampleRate = 44100.;
-  int mSeekCrossfadeSamples = 792;
+  int mSeekCrossfadeSamples = 882;
   int mSeekCrossfadeRemaining = 0;
   int mTransportFadeSamples = 528;
   int mTransportFadeRemaining = 0;
@@ -439,10 +493,12 @@ private:
   std::atomic<int> mPlayhead {0};
   std::atomic<bool> mPlaying {false};
   std::atomic<bool> mPaused {false};
-  std::atomic<bool> mTriggerPending {false};
-
   std::atomic<ScheduledCommand> mScheduledCommand {ScheduledCommand::None};
   std::atomic<int> mScheduledOffset {0};
+
+  std::atomic<bool> mScheduledSeekPending {false};
+  std::atomic<float> mScheduledSeekNorm {0.f};
+  std::atomic<int> mScheduledSeekOffset {0};
 
   OutputLimiter mLimiter;
 };

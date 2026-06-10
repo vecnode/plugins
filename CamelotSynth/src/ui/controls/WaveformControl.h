@@ -79,7 +79,8 @@ public:
 
     BeginInteraction();
     mScrubbing = true;
-    SeekAt(x);
+    mDragged = false;
+    PreviewSeekAt(x);
   }
 
   void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
@@ -87,12 +88,17 @@ public:
     if (!mScrubbing)
       return;
 
-    SeekAt(x);
+    mDragged = true;
+    CommitSeekAt(x);
   }
 
   void OnMouseUp(float x, float y, const IMouseMod& mod) override
   {
+    if (mScrubbing && !mDragged)
+      CommitSeekAt(x);
+
     mScrubbing = false;
+    mDragged = false;
     EndInteraction();
     SetDirty(false);
     RequestFullRepaint(GetUI());
@@ -104,7 +110,16 @@ public:
   }
 
 private:
-  void SeekAt(float x)
+  void PreviewSeekAt(float x)
+  {
+    if (mPlayheadOverlay)
+      mPlayheadOverlay->SetNormalizedPosition(NormalizedX(x));
+
+    SetDirty(false);
+    RequestFullRepaint(GetUI());
+  }
+
+  void CommitSeekAt(float x)
   {
     const float norm = NormalizedX(x);
     if (mPlayheadOverlay)
@@ -172,6 +187,7 @@ private:
   IColor mFillColor;
   IColor mOutlineColor;
   bool mScrubbing = false;
+  bool mDragged = false;
 };
 
 using SampleWaveformControl = WaveformTrackControl;

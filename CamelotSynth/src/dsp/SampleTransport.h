@@ -53,9 +53,9 @@ public:
     mPlayer.ScheduleCommand(SamplePlayer::ScheduledCommand::Stop, sampleOffset);
   }
 
-  void SeekTo(float norm)
+  void ScheduleSeek(float norm, int sampleOffset)
   {
-    mPlayer.SeekToNormalized(norm);
+    mPlayer.ScheduleSeek(norm, sampleOffset);
   }
 
   void ProcessBlock(sample** outputs, int nOutputs, int nFrames, sample targetGain, LogParamSmooth<sample, 1>& gainSmoother)

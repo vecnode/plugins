@@ -147,8 +147,7 @@ void CamelotSynth::OnParamChange(int paramIdx, EParamSource source, int sampleOf
       break;
 
     case kParamSeek:
-      (void) offset;
-      mSampleTransport.SeekTo(static_cast<float>(GetParam(kParamSeek)->Value()));
+      mSampleTransport.ScheduleSeek(static_cast<float>(GetParam(kParamSeek)->Value()), offset);
       mUiPlayheadBridge.MarkPlayheadDirty();
       break;
 
