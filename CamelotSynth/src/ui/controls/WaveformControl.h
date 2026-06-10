@@ -9,7 +9,10 @@
 
 BEGIN_IGRAPHICS_NAMESPACE
 
-/** Waveform envelope + scrub interaction (playhead is a separate overlay). */
+/**
+ * Waveform envelope and scrub interaction. Playhead is a separate overlay control.
+ * Envelope is drawn every frame (no ILayer cache). See UiPaintPolicy.h for repaint rules.
+ */
 class WaveformTrackControl : public IControl
 {
 public:

@@ -5,16 +5,24 @@
 BEGIN_IGRAPHICS_NAMESPACE
 
 /*
- * Windows NanoVG paint policy
+ * UiPaintPolicy — Windows NanoVG full-surface repaint contract
  *
- * Each frame: BeginFrame clears the FBO, only the WM_PAINT update region is drawn,
- * EndFrame composites the entire buffer to the HWND. Partial regions leave stale
- * pixels (trails during knob drag, playhead scrub, etc.).
+ * Context (see src/ARCHITECTURE.md § Windows rendering):
+ *   NanoVG renders to an off-screen FBO, then composites the full texture in EndFrame().
+ *   Per-control dirty rectangles cause partial WM_PAINT regions; without a full FBO clear
+ *   and full-surface redraw, undrawn pixels retain the previous frame (playhead trails,
+ *   knob label smear, meter LED ghosts).
  *
- * Policy:
- *  - SetStrictDrawing(true) + collapse invalidation to full bounds (IGraphics.cpp)
- *  - IGRAPHICS_OPAQUE_CLEAR on BeginFrame (CMakeLists.txt)
- *  - While interacting or any control dirty: mark the full surface dirty
+ * Required stack (all three):
+ *   1. IGRAPHICS_OPAQUE_CLEAR in CMake — FBO cleared after bind in IGraphicsNanoVG::BeginFrame
+ *   2. SetStrictDrawing(true) — IsDirty() and Draw() use full GetBounds() (IGraphics.cpp)
+ *   3. This header — coalesce dirty state and keep repainting while the user is dragging
+ *
+ * Interactive control checklist:
+ *   - Call BeginInteraction() on mouse down, EndInteraction() on mouse up
+ *   - After updating visuals: SetDirty(false) on self, then RequestFullRepaint(GetUI())
+ *   - Do not shrink mRECT on move (overlays); redraw the full plot/control area instead
+ *   - Avoid ILayer caches for content under moving overlays; draw directly each frame
  */
 
 namespace detail
@@ -37,6 +45,7 @@ inline void RegisterFullWindowBackground(IControl* pBackground)
   detail::RegisteredBackground() = pBackground;
 }
 
+/** Increments drag/scrub depth; display tick keeps full repaints active while > 0. */
 inline void BeginInteraction()
 {
   ++detail::InteractionDepth();
@@ -53,7 +62,7 @@ inline bool IsInteracting()
   return detail::InteractionDepth() > 0;
 }
 
-/** Mark the full-window background dirty (control 0). */
+/** Marks control 0 (full-window IPanelBackground) dirty for invalidation coalescing. */
 inline void CoalesceFullSurface(IGraphics* pGraphics)
 {
   if (!pGraphics)
@@ -67,7 +76,7 @@ inline void CoalesceFullSurface(IGraphics* pGraphics)
     pBG->SetDirty(false);
 }
 
-/** Request one full-plugin paint on the next display tick. */
+/** Schedules a full-plugin paint on the next graphics timer tick. */
 inline void RequestFullRepaint(IGraphics* pGraphics)
 {
   if (!pGraphics)
@@ -86,6 +95,7 @@ inline void AttachAndRegisterFullWindowBackground(IGraphics* pGraphics, const IC
   RegisterFullWindowBackground(pGraphics->GetControl(0));
 }
 
+/** Install once at end of editor Attach(). Enables strict drawing and display-tick coalescing. */
 inline void InstallPaintPolicy(IGraphics* pGraphics)
 {
   if (!pGraphics)
@@ -109,7 +119,7 @@ inline void InstallPaintPolicy(IGraphics* pGraphics)
   });
 }
 
-/** Call at end of editor layout — avoids host-colour bleed before first click. */
+/** Ensures the first visible frame is fully opaque (layout, OnUIOpen, first OnIdle). */
 inline void ForceInitialFullPaint(IGraphics* pGraphics)
 {
   if (!pGraphics)

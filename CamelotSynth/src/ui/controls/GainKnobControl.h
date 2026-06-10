@@ -5,7 +5,10 @@
 
 BEGIN_IGRAPHICS_NAMESPACE
 
-/** Gain knob: real-time label + DSP during drag, full-window repaint to avoid FBO trails. */
+/**
+ * Gain knob with live value label during drag.
+ * Follows UiPaintPolicy.h: BeginInteraction / RequestFullRepaint on every pointer move.
+ */
 class GainKnobControl : public IVKnobControl
 {
 public:

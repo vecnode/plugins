@@ -47,6 +47,7 @@ public:
 
 #if IPLUG_EDITOR
   void OnUIOpen() override;
+  /** First OnIdle after UI attach; triggers ForceInitialFullPaint once (see UiPaintPolicy.h). */
   bool mEditorPaintPrimed = false;
 #endif
 

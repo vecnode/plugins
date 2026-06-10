@@ -147,6 +147,16 @@ CamelotSynth addresses this at three levels:
 
 **Interaction tracking:** `BeginInteraction` / `EndInteraction` keep the display tick repainting at 60 Hz for the whole drag, even between per-control dirty flags.
 
+### Adding new interactive controls
+
+1. Include `UiPaintPolicy.h`.
+2. On pointer down: `BeginInteraction()`; on up: `EndInteraction()`.
+3. After changing anything visible: `SetDirty(false)` on the control, then `RequestFullRepaint(GetUI())`.
+4. Keep `mRECT` stable for overlays — do not call `SetTargetAndDrawRECTs` with a moving sub-rect.
+5. Do not cache moving content in `ILayer` if another control draws on top of the same area.
+
+Reference implementations: `GainKnobControl`, `WaveformTrackControl`, `PlayheadOverlayControl`.
+
 ---
 
 ## Module dependency rules

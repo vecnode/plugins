@@ -34,6 +34,7 @@ void CamelotSynth::OnUIOpen()
   Plugin::OnUIOpen();
   mEditorPaintPrimed = false;
 
+  // Full-surface repaint when the host opens the editor (avoids host background bleed).
   if (auto* pGraphics = GetUI())
     ::igraphics::ForceInitialFullPaint(pGraphics);
 }
@@ -58,9 +59,9 @@ void CamelotSynth::OnIdle()
   mMeterSender.TransmitData(*this);
 
 #if IPLUG_EDITOR
-  // Playhead sync runs on the ~50 Hz idle timer; paint policy in src/ui/bridge/UiPaintPolicy.h.
   if (auto* pGraphics = GetUI())
   {
+    // Graphics may not paint until the first idle tick after LayoutUI; prime once here too.
     if (!mEditorPaintPrimed)
     {
       mEditorPaintPrimed = true;

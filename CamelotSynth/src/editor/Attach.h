@@ -77,6 +77,7 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
   pGraphics->AttachControl(pTrack, kCtrlTagWaveform);
   pGraphics->AttachControl(pPlayhead, kCtrlTagPlayhead);
 
+  // Windows NanoVG paint contract — see src/ui/bridge/UiPaintPolicy.h and ARCHITECTURE.md
   ::igraphics::InstallPaintPolicy(pGraphics);
   ::igraphics::ForceInitialFullPaint(pGraphics);
 }

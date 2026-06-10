@@ -7,7 +7,10 @@
 
 BEGIN_IGRAPHICS_NAMESPACE
 
-/** Playhead line overlay. Uses stable plot bounds so invalidation never shrinks to a column. */
+/**
+ * Playhead line overlay. mRECT stays at plot bounds (never narrowed per frame).
+ * Narrow invalidation rects leave stale FBO pixels when EndFrame composites the full buffer.
+ */
 class PlayheadOverlayControl : public IControl
 {
 public:

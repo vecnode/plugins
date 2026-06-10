@@ -51,6 +51,7 @@ iplug_add_plugin(${PROJECT_NAME}
     resources/resource.h
   DEFINES
     IGRAPHICS_DISABLE_VSYNC
+    # Opaque FBO clear in IGraphicsNanoVG::BeginFrame (Windows drag-trail fix; see ARCHITECTURE.md)
     IGRAPHICS_OPAQUE_CLEAR
   RESOURCES
     resources/fonts/Roboto-Regular.ttf
