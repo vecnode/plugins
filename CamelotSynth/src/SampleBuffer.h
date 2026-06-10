@@ -2,11 +2,9 @@
 
 #include "IPlugPaths.h"
 #include "heapbuf.h"
-#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
-#include <vector>
 
 BEGIN_IPLUG_NAMESPACE
 
@@ -23,6 +21,7 @@ public:
     mLoaded = false;
 
 #ifdef OS_WIN
+    // Must use the plugin DLL instance — GetModuleHandle(nullptr) resolves to the host EXE (Reaper).
     extern HINSTANCE gHINSTANCE;
     void* hInstance = gHINSTANCE;
     if (!hInstance)
@@ -50,36 +49,6 @@ public:
   int GetLength() const { return mLength; }
   const sample* GetLeft() const { return mLeft.Get(); }
   const sample* GetRight() const { return mRight.Get(); }
-
-  void BuildWaveformPeaks(std::vector<float>& out, int numPoints) const
-  {
-    out.clear();
-    if (!mLoaded || mLength <= 0 || numPoints <= 0)
-      return;
-
-    out.resize(static_cast<size_t>(numPoints), 0.f);
-    const int blockSize = (std::max)(1, mLength / numPoints);
-    const sample* left = mLeft.Get();
-
-    for (int i = 0; i < numPoints; i++)
-    {
-      const int start = i * blockSize;
-      const int end = (std::min)(start + blockSize, mLength);
-      float peak = 0.f;
-
-      for (int s = start; s < end; s++)
-        peak = (std::max)(peak, static_cast<float>(std::fabs(left[s])));
-
-      out[static_cast<size_t>(i)] = peak;
-    }
-
-    const float maxPeak = *std::max_element(out.begin(), out.end());
-    if (maxPeak > 0.f)
-    {
-      for (float& v : out)
-        v /= maxPeak;
-    }
-  }
 
 private:
   static int16_t ReadLE16(const uint8_t* p)

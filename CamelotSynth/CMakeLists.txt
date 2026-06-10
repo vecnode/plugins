@@ -31,13 +31,28 @@ iplug_add_plugin(${PROJECT_NAME}
   SOURCES
     CamelotSynth.cpp
     CamelotSynth.h
-    SampleBuffer.h
-    SamplePlayer.h
+    CamelotSynthEditor.h
+    src/SampleBuffer.h
+    src/SamplePlayer.h
+    src/WaveformEnvelope.h
+    src/WaveformControl.h
+    src/GainKnobControl.h
+    src/UiPlayheadBridge.h
+    src/UiRedraw.h
     resources/resource.h
+  DEFINES
+    IGRAPHICS_DISABLE_VSYNC
   RESOURCES
     resources/fonts/Roboto-Regular.ttf
     resources/audio/AtmosSynth1_Dmaj.wav
 )
+
+# Headers under src/ are included as "src/Filename.h" from the plugin root.
+foreach(_fmt vst3 vst2 clap aax app)
+  if(TARGET ${PROJECT_NAME}-${_fmt})
+    target_include_directories(${PROJECT_NAME}-${_fmt} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  endif()
+endforeach()
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../scripts/cmake/embed-win-resources.cmake)
 iplug_embed_win_resources(${PROJECT_NAME})

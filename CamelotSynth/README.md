@@ -2,13 +2,14 @@
 
 Embedded sample player — plays `AtmosSynth1 D#maj.wav` from `plugins/assets/`.
 
-## UI
+## UI (720×450)
 
-- **Play** — start from the beginning, or resume if paused
-- **Pause** — hold playback at the current position
-- **Stop** — stop and return to the start
-- **Gain** — output level (20 ms smoothing to avoid clicks)
-- **Waveform** — downsampled preview of the embedded sample with a playhead marker
+Layout is defined in `CamelotSynthEditor.h`:
+
+- **Top** — `hello` tab bar
+- **Middle** — Play / Pause / Stop and Gain knob
+- **Bottom** — DAW-style waveform track with playhead
+- **Right** — isolated stereo meter column
 
 ## Build
 

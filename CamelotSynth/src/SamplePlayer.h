@@ -2,6 +2,7 @@
 
 #include "SampleBuffer.h"
 #include "Smoothers.h"
+#include <algorithm>
 #include <atomic>
 
 BEGIN_IPLUG_NAMESPACE
@@ -49,6 +50,28 @@ public:
     mPlaying.store(false);
     mPaused.store(false);
     mPlayhead.store(0);
+  }
+
+  void SeekToNormalized(float norm)
+  {
+    if (!mLeft || mLength <= 0)
+      return;
+
+    norm = (std::max)(0.f, (std::min)(1.f, norm));
+    int pos = static_cast<int>(norm * static_cast<float>(mLength));
+    if (pos >= mLength)
+      pos = mLength - 1;
+    if (pos < 0)
+      pos = 0;
+
+    mPlayhead.store(pos);
+
+    if (mPlaying.load())
+      mPaused.store(false);
+    else if (pos > 0)
+      mPaused.store(true);
+    else
+      mPaused.store(false);
   }
 
   void ProcessBlock(sample** outputs, int nOutputs, int nFrames, sample targetGain, LogParamSmooth<sample, 1>& gainSmoother)

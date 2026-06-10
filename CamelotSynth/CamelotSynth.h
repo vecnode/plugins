@@ -1,5 +1,6 @@
 #pragma once
 
+// Plugin entry + DSP/editor glue. Implementation modules live under src/.
 #include "IPlug_include_in_plug_hdr.h"
 #include "IControls.h"
 #include <vector>
@@ -10,7 +11,8 @@ enum EMsgTags
 {
   kMsgPlaySample = 0x7101,
   kMsgStopSample = 0x7102,
-  kMsgPauseSample = 0x7103
+  kMsgPauseSample = 0x7103,
+  kMsgSeekSample = 0x7104
 };
 
 enum EParams
@@ -20,9 +22,11 @@ enum EParams
 };
 
 #if IPLUG_DSP
-#include "SampleBuffer.h"
-#include "SamplePlayer.h"
+#include "src/SampleBuffer.h"
+#include "src/SamplePlayer.h"
 #include "Smoothers.h"
+#include "src/WaveformEnvelope.h"
+#include "src/UiPlayheadBridge.h"
 #endif
 
 enum EControlTags
@@ -53,10 +57,9 @@ private:
 
   SampleBuffer mSampleBuffer;
   SamplePlayer mSamplePlayer;
+  WaveformEnvelope mWaveformEnvelope;
+  UiPlayheadBridge mUiPlayheadBridge;
   IPeakAvgSender<2> mMeterSender;
   LogParamSmooth<sample, 1> mGainSmoother;
 #endif
-
-  std::vector<float> mWaveformPeaks;
-  bool mWaveformPeaksDirty = false;
 };
