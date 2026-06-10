@@ -9,11 +9,13 @@
 BEGIN_IGRAPHICS_NAMESPACE
 
 /**
- * CamelotCircle — 12×3 button grid bounded by spoke lines and zone rings.
+ * CamelotCircle — 12×3 button grid (B1–B36) bounded by spoke lines and zone rings.
  *
- * LineLayout defines the grid; BlockRegion cells are derived from it.
- * Hit-testing and highlight fills share the same PointAtAngle / AngularContains math
- * (do not use PathArc — iPlug PathArc applies a -90° offset that misaligns fills).
+ * Pointer contract:
+ * - Capture rect is the parent panel (e.g. middle); wheel geometry lives in drawBounds.
+ * - While the left button is held, active highlight follows the block under the pointer.
+ * - On mouse-up, blue selected highlight stays on the last block under the pointer.
+ * - No hover highlight when the button is up.
  */
 class CamelotCircle : public IControl
 {
@@ -50,16 +52,18 @@ public:
     bool valid = false;
   };
 
-  CamelotCircle(const IRECT& bounds,
+  CamelotCircle(const IRECT& captureBounds,
+                const IRECT& drawBounds,
                 const IColor& blockColor,
-                const IColor& hoverColor,
-                const IColor& pressedColor,
+                const IColor& activeColor,
+                const IColor& selectedColor,
                 const IColor& lineColor,
                 float lineThickness = 2.5f)
-  : IControl(bounds)
+  : IControl(captureBounds)
+  , mDrawRECT(drawBounds)
   , mBlockColor(blockColor)
-  , mHoverColor(hoverColor)
-  , mPressedColor(pressedColor)
+  , mActiveColor(activeColor)
+  , mSelectedColor(selectedColor)
   , mLineColor(lineColor)
   , mLineThickness(lineThickness)
   {
@@ -82,6 +86,8 @@ public:
 
   const std::array<BlockRegion, kBlockCount>& GetBlocks() const { return mBlocks; }
 
+  int GetSelectedBlockIndex() const { return mSelectedIndex; }
+
   void Draw(IGraphics& g) override
   {
     if (!mLines.valid)
@@ -89,65 +95,78 @@ public:
 
     g.FillEllipse(mBlockColor, mLines.outerBounds);
 
-    if (mHoverIndex >= 0 && mHoverIndex != mPressedIndex)
-      FillBlockRegion(g, mBlocks[static_cast<size_t>(mHoverIndex)], mHoverColor);
+    if (mSelectedIndex >= 0)
+      FillBlockRegion(g, mBlocks[static_cast<size_t>(mSelectedIndex)], mSelectedColor);
 
-    if (mPressedIndex >= 0)
-      FillBlockRegion(g, mBlocks[static_cast<size_t>(mPressedIndex)], mPressedColor);
+    if (mActiveIndex >= 0 && mActiveIndex != mSelectedIndex)
+      FillBlockRegion(g, mBlocks[static_cast<size_t>(mActiveIndex)], mActiveColor);
 
     DrawGridLines(g);
+    DrawBlockLabels(g);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
   {
-    const int hit = HitTestBlockIndex(x, y);
-    if (hit < 0)
+    if (!mod.L)
       return;
 
-    mPressedIndex = hit;
-    RequestControlRepaint(this);
+    mPointerDown = true;
+    UpdateActiveIndex(BlockIndexAt(x, y));
+  }
+
+  void OnMouseDrag(float x, float y, float dX, float dY, const IMouseMod& mod) override
+  {
+    if (!mod.L)
+    {
+      ClearActiveState();
+      return;
+    }
+
+    mPointerDown = true;
+    UpdateActiveIndex(BlockIndexAt(x, y));
   }
 
   void OnMouseUp(float x, float y, const IMouseMod& mod) override
   {
-    if (mPressedIndex >= 0)
-    {
-      mPressedIndex = -1;
-      RequestControlRepaint(this);
-    }
+    const int releasedBlock = BlockIndexAt(x, y);
+    ClearActiveState();
+
+    if (releasedBlock >= 0)
+      SetSelectedIndex(releasedBlock);
   }
 
   void OnMouseOver(float x, float y, const IMouseMod& mod) override
   {
-    if (mPressedIndex >= 0 && !mod.L)
+    if (mod.L)
     {
-      mPressedIndex = -1;
-      RequestControlRepaint(this);
+      mPointerDown = true;
+      UpdateActiveIndex(BlockIndexAt(x, y));
+    }
+    else if (mPointerDown || mActiveIndex >= 0)
+    {
+      ClearActiveState();
     }
 
-    SetHoverIndex(HitTestBlockIndex(x, y));
     IControl::OnMouseOver(x, y, mod);
   }
 
   void OnMouseOut() override
   {
-    if (mPressedIndex >= 0)
-    {
-      mPressedIndex = -1;
-      ResetInteractionDepth();
-    }
-
-    SetHoverIndex(-1);
+    ClearActiveState();
     IControl::OnMouseOut();
+  }
+
+  void OnTouchCancelled(float x, float y, const IMouseMod& mod) override
+  {
+    ClearActiveState();
   }
 
   bool IsHit(float x, float y) const override
   {
-    return HitTestBlockIndex(x, y) >= 0;
+    return IsInsideWheel(x, y);
   }
 
 private:
-  /** Same polar→XY as spoke lines (standard math degrees, -90° = 12 o'clock). */
   static void PointAtAngle(float cx, float cy, float radius, float angleDeg, float& x, float& y)
   {
     const float rad = angleDeg * kDegToRad;
@@ -155,7 +174,6 @@ private:
     y = cy + radius * std::sin(rad);
   }
 
-  /** Pointer angle relative to kStartAngleDeg, in [0, 360). */
   static float RelativeAngleDeg(float x, float y, float cx, float cy)
   {
     float rel = std::atan2(y - cy, x - cx) * kRadToDeg - kStartAngleDeg;
@@ -166,51 +184,32 @@ private:
     return rel;
   }
 
-  static void NormalizeRelSpan(float angleStartDeg, float angleEndDeg, float& startRel, float& endRel)
+  static float BlockMidAngleDeg(const BlockRegion& block)
   {
-    startRel = angleStartDeg - kStartAngleDeg;
-    endRel = angleEndDeg - kStartAngleDeg;
-    while (startRel < 0.f)
-      startRel += 360.f;
-    while (endRel < 0.f)
-      endRel += 360.f;
-    while (startRel >= 360.f)
-      startRel -= 360.f;
-    while (endRel >= 360.f)
-      endRel -= 360.f;
+    float a0 = block.angleStartDeg;
+    float a1 = block.angleEndDeg;
+    if (a1 <= a0)
+      a1 += 360.f;
+    return (a0 + a1) * 0.5f;
   }
 
-  static bool AngularContains(float relDeg, float angleStartDeg, float angleEndDeg)
+  static float LabelFontSize(int zone)
   {
-    float startRel = 0.f;
-    float endRel = 0.f;
-    NormalizeRelSpan(angleStartDeg, angleEndDeg, startRel, endRel);
-
-    if (endRel > startRel)
-      return relDeg >= startRel && relDeg < endRel;
-
-    if (endRel < startRel)
-      return relDeg >= startRel || relDeg < endRel;
-
-    return false;
-  }
-
-  static bool BlockContainsPoint(const BlockRegion& block, float x, float y, float cx, float cy)
-  {
-    const float dx = x - cx;
-    const float dy = y - cy;
-    const float distSq = dx * dx + dy * dy;
-
-    if (distSq < block.rInner * block.rInner || distSq > block.rOuter * block.rOuter)
-      return false;
-
-    return AngularContains(RelativeAngleDeg(x, y, cx, cy), block.angleStartDeg, block.angleEndDeg);
+    switch (zone)
+    {
+      case 0: return 8.f;
+      case 1: return 10.f;
+      default: return 11.f;
+    }
   }
 
   void RebuildFromBounds()
   {
-    BuildLineLayout(mLines, mRECT);
+    BuildLineLayout(mLines, mDrawRECT);
     BuildBlockRegions(mBlocks, mLines);
+
+    for (int i = 0; i < kBlockCount; i++)
+      mBlockLabels[static_cast<size_t>(i)].SetFormatted(8, "B%d", i + 1);
   }
 
   static void BuildLineLayout(LineLayout& lines, const IRECT& bounds)
@@ -255,18 +254,28 @@ private:
     }
   }
 
-  int HitTestBlockIndex(float x, float y) const
+  bool IsInsideWheel(float x, float y) const
   {
     if (!mLines.valid)
+      return false;
+
+    const float dx = x - mLines.cx;
+    const float dy = y - mLines.cy;
+    const float distSq = dx * dx + dy * dy;
+    const float r = mLines.outerRadius;
+    const float outerRadiusSq = r * r * 1.0025f;
+    return distSq <= outerRadiusSq;
+  }
+
+  int HitTestBlockIndex(float x, float y) const
+  {
+    if (!IsInsideWheel(x, y))
       return -1;
 
     const float dx = x - mLines.cx;
     const float dy = y - mLines.cy;
     const float distSq = dx * dx + dy * dy;
     const float r = mLines.outerRadius;
-
-    if (distSq > r * r)
-      return -1;
 
     const float relDeg = RelativeAngleDeg(x, y, mLines.cx, mLines.cy);
     int spoke = static_cast<int>(relDeg / kSliceDeg);
@@ -282,12 +291,36 @@ private:
     return spoke * kZoneCount + zone;
   }
 
-  void SetHoverIndex(int index)
+  int BlockIndexAt(float x, float y) const
   {
-    if (index == mHoverIndex)
+    return HitTestBlockIndex(x, y);
+  }
+
+  void ClearActiveState()
+  {
+    if (!mPointerDown && mActiveIndex < 0)
       return;
 
-    mHoverIndex = index;
+    mPointerDown = false;
+    mActiveIndex = -1;
+    RequestControlRepaint(this);
+  }
+
+  void UpdateActiveIndex(int index)
+  {
+    if (index == mActiveIndex)
+      return;
+
+    mActiveIndex = index;
+    RequestControlRepaint(this);
+  }
+
+  void SetSelectedIndex(int index)
+  {
+    if (index == mSelectedIndex)
+      return;
+
+    mSelectedIndex = index;
     RequestControlRepaint(this);
   }
 
@@ -311,7 +344,27 @@ private:
     g.DrawEllipse(mLineColor, mLines.outerBounds, nullptr, mLineThickness);
   }
 
-  /** Tessellated annular sector — same angles/radii as BlockContainsPoint. */
+  void DrawBlockLabels(IGraphics& g) const
+  {
+    const IColor labelColor(225, 228, 235);
+
+    for (const BlockRegion& block : mBlocks)
+    {
+      const float midAngle = BlockMidAngleDeg(block);
+      const float midRadius = (block.rInner + block.rOuter) * 0.5f;
+      float lx = 0.f;
+      float ly = 0.f;
+      PointAtAngle(mLines.cx, mLines.cy, midRadius, midAngle, lx, ly);
+
+      const IText labelStyle(LabelFontSize(block.zone), labelColor, "Roboto-Regular",
+                               EAlign::Center, EVAlign::Middle);
+      const IRECT labelBounds(lx - 18.f, ly - 8.f, lx + 18.f, ly + 8.f);
+      const int idx = block.FlatIndex();
+
+      g.DrawText(labelStyle, mBlockLabels[static_cast<size_t>(idx)].Get(), labelBounds);
+    }
+  }
+
   void FillBlockRegion(IGraphics& g, const BlockRegion& block, const IColor& fill) const
   {
     float a0 = block.angleStartDeg;
@@ -364,16 +417,19 @@ private:
     g.PathFill(fill);
   }
 
+  IRECT mDrawRECT;
   IColor mBlockColor;
-  IColor mHoverColor;
-  IColor mPressedColor;
+  IColor mActiveColor;
+  IColor mSelectedColor;
   IColor mLineColor;
   float mLineThickness;
 
   LineLayout mLines;
   std::array<BlockRegion, kBlockCount> mBlocks {};
-  int mHoverIndex = -1;
-  int mPressedIndex = -1;
+  std::array<WDL_String, kBlockCount> mBlockLabels {};
+  int mActiveIndex = -1;
+  int mSelectedIndex = -1;
+  bool mPointerDown = false;
 };
 
 END_IGRAPHICS_NAMESPACE

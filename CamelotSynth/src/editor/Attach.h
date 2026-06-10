@@ -3,6 +3,7 @@
 #include "CamelotSynth.h"
 #include "Layout.h"
 #include "Styles.h"
+#include "FramedPanelControl.h"
 #include "GainKnobControl.h"
 #include "WaveformControl.h"
 #include "PlayheadOverlayControl.h"
@@ -38,7 +39,7 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
     TabStyle(),
     EVShape::EndsRounded));
 
-  pGraphics->AttachControl(new IPanelControl(layout.transport, PanelColor(), false));
+  pGraphics->AttachControl(new FramedPanelControl(layout.transport));
 
   const IRECT transportRow = layout.transport.GetPadded(-8.f).GetMidHPadded(320.f);
   const IRECT playRect = transportRow.GetGridCell(0, 0, 1, 3).GetCentredInside(100, 44);
@@ -60,12 +61,13 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
     SplashClickActionFunc(pCaller);
   }, "Stop", buttonStyle.WithLabelText({15.f, EVAlign::Middle}), true, true, EVShape::Rectangle));
 
-  pGraphics->AttachControl(new IPanelControl(layout.middle, PanelColor(), false));
+  pGraphics->AttachControl(new FramedPanelControl(layout.middle));
   pGraphics->AttachControl(new ::igraphics::CamelotCircle(
+    layout.middle,
     layout.noteCircle,
     NoteCircleFillColor(),
-    CamelotBlockHoverColor(),
-    CamelotBlockPressedColor(),
+    CamelotBlockActiveColor(),
+    CamelotBlockSelectedColor(),
     NoteCircleLineColor(),
     2.5f));
   pGraphics->AttachControl(new ::igraphics::GainKnobControl(layout.gain, kParamGain, "Gain", controlStyle));

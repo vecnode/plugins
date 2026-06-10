@@ -10,6 +10,11 @@ inline IColor PanelColor()
   return IColor(34, 36, 42);
 }
 
+inline IColor PanelBorderColor()
+{
+  return IColor(55, 58, 66);
+}
+
 inline IColor NoteCircleFillColor()
 {
   return IColor(88, 92, 100);
@@ -20,14 +25,14 @@ inline IColor NoteCircleLineColor()
   return IColor(168, 174, 186);
 }
 
-inline IColor CamelotBlockHoverColor()
-{
-  return IColor(118, 124, 136);
-}
-
-inline IColor CamelotBlockPressedColor()
+inline IColor CamelotBlockActiveColor()
 {
   return IColor(150, 156, 170);
+}
+
+inline IColor CamelotBlockSelectedColor()
+{
+  return IColor(72, 148, 220);
 }
 
 inline IVStyle ControlStyle()

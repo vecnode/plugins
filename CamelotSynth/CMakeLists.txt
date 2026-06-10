@@ -39,6 +39,7 @@ set(_camelot_src_modules
   src/ui/controls/CamelotCircleControl.h
   src/editor/Layout.h
   src/editor/Styles.h
+  src/editor/FramedPanelControl.h
   src/editor/Attach.h
 )
 

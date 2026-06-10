@@ -9,7 +9,7 @@ BEGIN_IGRAPHICS_NAMESPACE
  * UiPaintPolicy — Windows NanoVG repaint contract (see src/ARCHITECTURE.md).
  *
  * Full-plugin repaints run only while IsInteracting() (knob drag, waveform scrub, etc.).
- * Lightweight hovers (CamelotCircle) mark only the control dirty — partial bounds are safe
+ * Lightweight control updates (CamelotCircle) mark only the control dirty — partial bounds are safe
  * with IGRAPHICS_OPAQUE_CLEAR + SetFullRepaintQuery(IsInteracting).
  */
 
@@ -83,7 +83,7 @@ inline void RequestFullRepaint(IGraphics* pGraphics)
   CoalesceFullSurface(pGraphics);
 }
 
-/** Local control update — use for hover highlights (CamelotCircle). */
+/** Local control update — use for CamelotCircle block highlights. */
 inline void RequestControlRepaint(IControl* pControl)
 {
   if (!pControl)

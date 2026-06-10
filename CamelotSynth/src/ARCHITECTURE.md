@@ -107,7 +107,8 @@ WaveformEnvelope                      ProcessBlock → outputs
 
 - **LineLayout** — spoke angles and zone ring radii (the visible grid).
 - **BlockRegion** — 36 cells computed from that layout (`BuildBlockRegions`); each stores angle/radius bounds and `ContainsPoint`.
-- **Draw** — base disc, highlight fill on hovered/pressed block, then grid lines on top. Fills use the same `PointAtAngle` tessellation as hit-testing (not `PathArc`, which misaligns by 90°).
+- **Draw** — base disc, highlight fill, grid lines, then **B1–B36** labels centred in each block.
+- **Input** — pressed block follows the pointer while the button is held (`OnMouseDrag` + `OnMouseOver` with `mod.L`).
 - Public accessors: `GetLineLayout()`, `GetBlock(spoke, zone)`, `GetBlocks()`.
 
 ---
