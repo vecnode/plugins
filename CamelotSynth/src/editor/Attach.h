@@ -25,7 +25,7 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
   const IVStyle buttonStyle = ButtonStyle();
   const Regions layout = ComputeRegions(pGraphics->GetBounds());
 
-  ::igraphics::AttachAndRegisterFullWindowBackground(pGraphics, IColor(26, 28, 32));
+  ::igraphics::AttachAndRegisterFullWindowBackground(pGraphics, PanelColor());
 
   pGraphics->AttachControl(new IVLEDMeterControl<2>(layout.meter, "", controlStyle), kCtrlTagMeter);
 

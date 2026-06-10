@@ -1,6 +1,9 @@
-# iPlug2 Plugins
+# iPlug2 VST Plugins
 
 Out-of-source plugin projects linked to a sibling iPlug2 checkout.
+
+1. Embedded-sample player built on iPlug2. Real-time audio runs in `ProcessBlock`; the editor is a fixed-layout IGraphics UI with transport, a Camelot note circle, gain control, waveform.
+
 
 ## Layout
 
@@ -8,9 +11,7 @@ Out-of-source plugin projects linked to a sibling iPlug2 checkout.
 Dev/
 ├── iPlug2/
 └── plugins/
-    ├── GainPlugin/      # gain effect
-    ├── ControlsDemo/    # GUI widgets
-    ├── CamelotSynth/    # embedded sample player (Play / Stop)
+    ├── CamelotSynth/    # embedded sample player
     ├── assets/          # shared audio (gitignored)
     └── scripts/
 ```

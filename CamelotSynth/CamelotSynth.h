@@ -45,6 +45,11 @@ class CamelotSynth final : public Plugin
 public:
   CamelotSynth(const InstanceInfo& info);
 
+#if IPLUG_EDITOR
+  void OnUIOpen() override;
+  bool mEditorPaintPrimed = false;
+#endif
+
 #if IPLUG_DSP
 public:
   void ProcessBlock(sample** inputs, sample** outputs, int nFrames) override;

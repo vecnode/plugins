@@ -9,7 +9,7 @@
 
 BEGIN_IGRAPHICS_NAMESPACE
 
-/** Static waveform envelope + scrub interaction (playhead is a separate overlay). */
+/** Waveform envelope + scrub interaction (playhead is a separate overlay). */
 class WaveformTrackControl : public IControl
 {
 public:
@@ -33,8 +33,6 @@ public:
   {
     mMax = maxPeaks;
     mMin = minPeaks;
-    if (mLayer)
-      mLayer->Invalidate();
     SetDirty(false);
     RequestFullRepaint(GetUI());
   }
@@ -47,8 +45,6 @@ public:
 
   void OnResize() override
   {
-    if (mLayer)
-      mLayer->Invalidate();
     if (mPlayheadOverlay)
       mPlayheadOverlay->SetPlotBounds(PlotBounds());
     SetDirty(false);
@@ -56,7 +52,7 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    DrawStaticContent(g, PlotBounds());
+    DrawContent(g, PlotBounds());
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
@@ -81,8 +77,6 @@ public:
   {
     mScrubbing = false;
     EndInteraction();
-    if (mLayer)
-      mLayer->Invalidate();
     SetDirty(false);
     RequestFullRepaint(GetUI());
   }
@@ -115,7 +109,7 @@ private:
     return (std::max)(0.f, (std::min)(1.f, (x - plot.L) / plot.W()));
   }
 
-  void DrawStaticContent(IGraphics& g, const IRECT& plot)
+  void DrawContent(IGraphics& g, const IRECT& plot)
   {
     const IColor bg(22, 24, 28);
     const IColor border(55, 58, 66);
@@ -130,20 +124,7 @@ private:
     if (mMax.size() < 2 || mMin.size() != mMax.size())
       return;
 
-    if (mScrubbing)
-    {
-      DrawEnvelope(g, plot, fill, outline);
-      return;
-    }
-
-    if (!g.CheckLayer(mLayer))
-    {
-      g.StartLayer(this, mRECT);
-      DrawEnvelope(g, plot, fill, outline);
-      mLayer = g.EndLayer();
-    }
-
-    g.DrawLayer(mLayer);
+    DrawEnvelope(g, plot, fill, outline);
   }
 
   void DrawEnvelope(IGraphics& g, const IRECT& plot, const IColor& fill, const IColor& outline) const
@@ -173,11 +154,9 @@ private:
   PlayheadOverlayControl* mPlayheadOverlay = nullptr;
   std::vector<float> mMax;
   std::vector<float> mMin;
-  ILayerPtr mLayer;
   bool mScrubbing = false;
 };
 
-// Backward-compatible alias used by CamelotSynth.cpp
 using SampleWaveformControl = WaveformTrackControl;
 
 END_IGRAPHICS_NAMESPACE

@@ -51,6 +51,7 @@ iplug_add_plugin(${PROJECT_NAME}
     resources/resource.h
   DEFINES
     IGRAPHICS_DISABLE_VSYNC
+    IGRAPHICS_OPAQUE_CLEAR
   RESOURCES
     resources/fonts/Roboto-Regular.ttf
     resources/audio/AtmosSynth1_Dmaj.wav

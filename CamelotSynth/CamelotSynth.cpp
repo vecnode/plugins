@@ -1,6 +1,7 @@
 #include "CamelotSynth.h"
 #include "CamelotSynthEditor.h"
 #include "WaveformControl.h"
+#include "UiPaintPolicy.h"
 #include "IPlug_include_in_plug_src.h"
 
 namespace
@@ -27,6 +28,17 @@ CamelotSynth::CamelotSynth(const InstanceInfo& info)
 #endif
 }
 
+#if IPLUG_EDITOR
+void CamelotSynth::OnUIOpen()
+{
+  Plugin::OnUIOpen();
+  mEditorPaintPrimed = false;
+
+  if (auto* pGraphics = GetUI())
+    ::igraphics::ForceInitialFullPaint(pGraphics);
+}
+#endif
+
 #if IPLUG_DSP
 void CamelotSynth::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 {
@@ -49,6 +61,12 @@ void CamelotSynth::OnIdle()
   // Playhead sync runs on the ~50 Hz idle timer; paint policy in src/ui/bridge/UiPaintPolicy.h.
   if (auto* pGraphics = GetUI())
   {
+    if (!mEditorPaintPrimed)
+    {
+      mEditorPaintPrimed = true;
+      ::igraphics::ForceInitialFullPaint(pGraphics);
+    }
+
     if (auto* pWaveform = pGraphics->GetControlWithTag(kCtrlTagWaveform))
     {
       auto* pCtrl = pWaveform->As<::igraphics::SampleWaveformControl>();

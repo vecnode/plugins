@@ -7,11 +7,14 @@ BEGIN_IGRAPHICS_NAMESPACE
 /*
  * Windows NanoVG paint policy
  *
- * BeginFrame() clears the GL framebuffer to transparent. EndFrame() composites
- * the entire buffer to the HWND. Any pixel not redrawn shows the previous frame.
+ * Each frame: BeginFrame clears the FBO, only the WM_PAINT update region is drawn,
+ * EndFrame composites the entire buffer to the HWND. Partial regions leave stale
+ * pixels (trails during knob drag, playhead scrub, etc.).
  *
- * Policy: whenever any control is dirty, also mark the full-window background
- * dirty so IsDirty() invalidates the entire plugin bounds — one opaque frame.
+ * Policy:
+ *  - SetStrictDrawing(true) + collapse invalidation to full bounds (IGraphics.cpp)
+ *  - IGRAPHICS_OPAQUE_CLEAR on BeginFrame (CMakeLists.txt)
+ *  - While interacting or any control dirty: mark the full surface dirty
  */
 
 namespace detail
@@ -50,7 +53,7 @@ inline bool IsInteracting()
   return detail::InteractionDepth() > 0;
 }
 
-/** Expand the next paint to the full plugin bounds. */
+/** Mark the full-window background dirty (control 0). */
 inline void CoalesceFullSurface(IGraphics* pGraphics)
 {
   if (!pGraphics)
@@ -64,8 +67,13 @@ inline void CoalesceFullSurface(IGraphics* pGraphics)
     pBG->SetDirty(false);
 }
 
+/** Request one full-plugin paint on the next display tick. */
 inline void RequestFullRepaint(IGraphics* pGraphics)
 {
+  if (!pGraphics)
+    return;
+
+  pGraphics->SetAllControlsDirty();
   CoalesceFullSurface(pGraphics);
 }
 
@@ -93,8 +101,11 @@ inline void InstallPaintPolicy(IGraphics* pGraphics)
         anyDirty = true;
     });
 
-    if (anyDirty)
+    if (anyDirty || IsInteracting())
+    {
+      pGraphics->SetAllControlsDirty();
       CoalesceFullSurface(pGraphics);
+    }
   });
 }
 
@@ -104,8 +115,7 @@ inline void ForceInitialFullPaint(IGraphics* pGraphics)
   if (!pGraphics)
     return;
 
-  pGraphics->SetAllControlsDirty();
-  CoalesceFullSurface(pGraphics);
+  RequestFullRepaint(pGraphics);
 }
 
 END_IGRAPHICS_NAMESPACE
