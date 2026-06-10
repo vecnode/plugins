@@ -50,10 +50,14 @@ public:
     RequestFullRepaint(GetUI());
   }
 
+  bool IsScrubbing() const { return mScrubbing; }
+
   void SyncPlayheadFromDSP(float normPos)
   {
-    if (mPlayheadOverlay)
-      mPlayheadOverlay->SetNormalizedPosition(normPos);
+    if (mScrubbing || !mPlayheadOverlay)
+      return;
+
+    mPlayheadOverlay->SetNormalizedPosition(normPos);
   }
 
   void OnResize() override

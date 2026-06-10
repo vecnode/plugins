@@ -7,23 +7,18 @@
 
 const int kNumPresets = 1;
 
-enum EMsgTags
-{
-  kMsgPlaySample = 0x7101,
-  kMsgStopSample = 0x7102,
-  kMsgPauseSample = 0x7103,
-  kMsgSeekSample = 0x7104
-};
-
 enum EParams
 {
   kParamGain = 0,
+  kParamTrigPlay,
+  kParamTrigPause,
+  kParamTrigStop,
+  kParamSeek,
   kNumParams
 };
 
 #if IPLUG_DSP
-#include "SampleBuffer.h"
-#include "SamplePlayer.h"
+#include "SampleTransport.h"
 #include "Smoothers.h"
 #include "WaveformEnvelope.h"
 #include "UiPlayheadBridge.h"
@@ -55,15 +50,13 @@ public:
 public:
   void ProcessBlock(sample** inputs, sample** outputs, int nFrames) override;
   void OnReset() override;
-  void OnParamChange(int paramIdx) override;
+  void OnParamChange(int paramIdx, EParamSource source, int sampleOffset) override;
   void OnIdle() override;
-  bool OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pData) override;
-
 private:
   void LoadEmbeddedSample();
+  void ResetTransportTrigger(int paramIdx);
 
-  SampleBuffer mSampleBuffer;
-  SamplePlayer mSamplePlayer;
+  SampleTransport mSampleTransport;
   WaveformEnvelope mWaveformEnvelope;
   UiPlayheadBridge mUiPlayheadBridge;
   IPeakAvgSender<2> mMeterSender;

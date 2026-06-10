@@ -28,8 +28,10 @@ include(${IPLUG2_DIR}/iPlug2.cmake)
 find_package(iPlug2 REQUIRED)
 
 set(_camelot_src_modules
+  src/dsp/OutputLimiter.h
   src/dsp/SampleBuffer.h
   src/dsp/SamplePlayer.h
+  src/dsp/SampleTransport.h
   src/model/WaveformEnvelope.h
   src/ui/bridge/UiPlayheadBridge.h
   src/ui/bridge/UiPaintPolicy.h

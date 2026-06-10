@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SamplePlayer.h"
+#include "SampleTransport.h"
 
 BEGIN_IPLUG_NAMESPACE
 
@@ -20,9 +20,9 @@ public:
   }
 
   /** Sync playhead while playing or right after transport/seek messages. */
-  bool ShouldSyncPlayhead(const SamplePlayer& player) const
+  bool ShouldSyncPlayhead(const SampleTransport& transport) const
   {
-    return mForcePlayhead || player.IsPlaying();
+    return mForcePlayhead || transport.IsPlaying();
   }
 
   void ClearPlayheadForce() { mForcePlayhead = false; }

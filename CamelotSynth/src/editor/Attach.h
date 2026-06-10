@@ -18,7 +18,7 @@ namespace CamelotSynthEditor
 inline ::igraphics::WaveformTrackControl::SeekHandler MakeSeekHandler(CamelotSynth& plugin)
 {
   return [&plugin](float norm) {
-    plugin.SendArbitraryMsgFromUI(kMsgSeekSample, kNoTag, sizeof(float), &norm);
+    plugin.SendParameterValueFromUI(kParamSeek, static_cast<double>(norm));
   };
 }
 
@@ -44,17 +44,17 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
   const IRECT stopRect = transportRow.GetGridCell(0, 2, 1, 3).GetCentredInside(100, 44);
 
   pGraphics->AttachControl(new IVButtonControl(playRect, [&plugin](IControl* pCaller) {
-    plugin.SendArbitraryMsgFromUI(kMsgPlaySample);
+    plugin.SendParameterValueFromUI(kParamTrigPlay, 1.);
     SplashClickActionFunc(pCaller);
   }, "Play", buttonStyle.WithLabelText({15.f, EVAlign::Middle}), true, true, EVShape::Rectangle));
 
   pGraphics->AttachControl(new IVButtonControl(pauseRect, [&plugin](IControl* pCaller) {
-    plugin.SendArbitraryMsgFromUI(kMsgPauseSample);
+    plugin.SendParameterValueFromUI(kParamTrigPause, 1.);
     SplashClickActionFunc(pCaller);
   }, "Pause", buttonStyle.WithLabelText({15.f, EVAlign::Middle}), true, true, EVShape::Rectangle));
 
   pGraphics->AttachControl(new IVButtonControl(stopRect, [&plugin](IControl* pCaller) {
-    plugin.SendArbitraryMsgFromUI(kMsgStopSample);
+    plugin.SendParameterValueFromUI(kParamTrigStop, 1.);
     SplashClickActionFunc(pCaller);
   }, "Stop", buttonStyle.WithLabelText({15.f, EVAlign::Middle}), true, true, EVShape::Rectangle));
 

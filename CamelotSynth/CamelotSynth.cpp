@@ -8,12 +8,17 @@ namespace
 {
 constexpr int kWaveformPoints = 1024;
 constexpr double kGainSmoothMs = 20.;
+constexpr int kHiddenTransportFlags = IParam::kFlagMeta | IParam::kFlagCannotAutomate;
 }
 
 CamelotSynth::CamelotSynth(const InstanceInfo& info)
 : iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets))
 {
   GetParam(kParamGain)->InitDouble("Gain", 100., 0., 100.0, 0.01, "%");
+  GetParam(kParamTrigPlay)->InitBool("Play", false, "", kHiddenTransportFlags);
+  GetParam(kParamTrigPause)->InitBool("Pause", false, "", kHiddenTransportFlags);
+  GetParam(kParamTrigStop)->InitBool("Stop", false, "", kHiddenTransportFlags);
+  GetParam(kParamSeek)->InitDouble("Seek", 0., 0., 1., 0.001, "", kHiddenTransportFlags);
 
 #if IPLUG_EDITOR
   mMakeGraphicsFunc = [&]() {
@@ -48,7 +53,7 @@ void CamelotSynth::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
     memset(outputs[c], 0, nFrames * sizeof(sample));
 
   const sample targetGain = static_cast<sample>(GetParam(kParamGain)->Value() / 100.);
-  mSamplePlayer.ProcessBlock(outputs, nChans, nFrames, targetGain, mGainSmoother);
+  mSampleTransport.ProcessBlock(outputs, nChans, nFrames, targetGain, mGainSmoother);
 
   mMeterSender.ProcessBlock(outputs, nFrames, kCtrlTagMeter);
 }
@@ -72,11 +77,11 @@ void CamelotSynth::OnIdle()
     {
       auto* pCtrl = pWaveform->As<::igraphics::SampleWaveformControl>();
 
-      if (mUiPlayheadBridge.ConsumeWaveformDirty() && mWaveformEnvelope.IsValid())
+      if (mSampleTransport.ConsumeWaveformDirty() && mWaveformEnvelope.IsValid())
         pCtrl->SetEnvelope(mWaveformEnvelope.Max(), mWaveformEnvelope.Min());
 
-      if (mUiPlayheadBridge.ShouldSyncPlayhead(mSamplePlayer))
-        pCtrl->SyncPlayheadFromDSP(mSamplePlayer.GetPlayheadNorm());
+      if (!pCtrl->IsScrubbing() && mUiPlayheadBridge.ShouldSyncPlayhead(mSampleTransport))
+        pCtrl->SyncPlayheadFromDSP(mSampleTransport.GetPlayheadNorm());
 
       mUiPlayheadBridge.ClearPlayheadForce();
     }
@@ -89,62 +94,66 @@ void CamelotSynth::OnReset()
   mMeterSender.Reset(GetSampleRate());
   mGainSmoother.SetSmoothTime(kGainSmoothMs, GetSampleRate());
   mGainSmoother.SetValue(static_cast<sample>(GetParam(kParamGain)->Value() / 100.));
+  mSampleTransport.SetSampleRate(GetSampleRate());
   LoadEmbeddedSample();
 }
 
 void CamelotSynth::LoadEmbeddedSample()
 {
-  if (mSampleBuffer.LoadEmbedded(ATMOS_SAMPLE_FN, GetSampleRate()))
-  {
-    mSamplePlayer.SetBuffer(mSampleBuffer);
-    mWaveformEnvelope.BuildFrom(mSampleBuffer, kWaveformPoints);
-    mUiPlayheadBridge.MarkWaveformDirty();
-  }
+  if (mSampleTransport.LoadEmbedded(ATMOS_SAMPLE_FN, GetSampleRate()))
+    mWaveformEnvelope.BuildFrom(mSampleTransport.GetBuffer(), kWaveformPoints);
 }
 
-void CamelotSynth::OnParamChange(int paramIdx)
+void CamelotSynth::ResetTransportTrigger(int paramIdx)
 {
-  (void) paramIdx;
+  GetParam(paramIdx)->Set(0.);
 }
 
-bool CamelotSynth::OnMessage(int msgTag, int ctrlTag, int dataSize, const void* pData)
+void CamelotSynth::OnParamChange(int paramIdx, EParamSource source, int sampleOffset)
 {
-  (void) ctrlTag;
+  (void) source;
+  const int offset = sampleOffset < 0 ? 0 : sampleOffset;
 
-  if (msgTag == kMsgPlaySample)
+  switch (paramIdx)
   {
-    if (!mSampleBuffer.IsLoaded())
-      LoadEmbeddedSample();
+    case kParamTrigPlay:
+      if (GetParam(kParamTrigPlay)->Bool())
+      {
+        if (!mSampleTransport.IsSampleLoaded())
+          LoadEmbeddedSample();
 
-    mSamplePlayer.RequestPlay();
-    mUiPlayheadBridge.MarkPlayheadDirty();
-    return true;
+        mSampleTransport.SchedulePlay(offset);
+        mUiPlayheadBridge.MarkPlayheadDirty();
+      }
+      ResetTransportTrigger(kParamTrigPlay);
+      break;
+
+    case kParamTrigPause:
+      if (GetParam(kParamTrigPause)->Bool())
+      {
+        mSampleTransport.SchedulePause(offset);
+        mUiPlayheadBridge.MarkPlayheadDirty();
+      }
+      ResetTransportTrigger(kParamTrigPause);
+      break;
+
+    case kParamTrigStop:
+      if (GetParam(kParamTrigStop)->Bool())
+      {
+        mSampleTransport.ScheduleStop(offset);
+        mUiPlayheadBridge.MarkPlayheadDirty();
+      }
+      ResetTransportTrigger(kParamTrigStop);
+      break;
+
+    case kParamSeek:
+      (void) offset;
+      mSampleTransport.SeekTo(static_cast<float>(GetParam(kParamSeek)->Value()));
+      mUiPlayheadBridge.MarkPlayheadDirty();
+      break;
+
+    default:
+      break;
   }
-
-  if (msgTag == kMsgPauseSample)
-  {
-    mSamplePlayer.RequestPause();
-    mUiPlayheadBridge.MarkPlayheadDirty();
-    return true;
-  }
-
-  if (msgTag == kMsgStopSample)
-  {
-    mSamplePlayer.RequestStop();
-    mUiPlayheadBridge.MarkPlayheadDirty();
-    return true;
-  }
-
-  if (msgTag == kMsgSeekSample && pData && dataSize >= static_cast<int>(sizeof(float)))
-  {
-    const float norm = *static_cast<const float*>(pData);
-    mSamplePlayer.SeekToNormalized(norm);
-    mUiPlayheadBridge.MarkPlayheadDirty();
-    return true;
-  }
-
-  (void) dataSize;
-  (void) pData;
-  return false;
 }
 #endif
