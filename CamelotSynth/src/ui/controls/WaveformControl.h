@@ -18,9 +18,19 @@ class WaveformTrackControl : public IControl
 public:
   using SeekHandler = std::function<void(float normalizedPosition)>;
 
-  WaveformTrackControl(const IRECT& bounds, SeekHandler onSeek, int ctrlTag = kNoTag)
+  WaveformTrackControl(const IRECT& bounds,
+                       SeekHandler onSeek,
+                       int ctrlTag = kNoTag,
+                       const IColor& plotBg = IColor(42, 44, 50),
+                       const IColor& borderColor = IColor(96, 186, 132),
+                       const IColor& fillColor = IColor(72, 148, 220, 140),
+                       const IColor& outlineColor = IColor(96, 186, 132))
   : IControl(bounds, ctrlTag)
   , mOnSeek(std::move(onSeek))
+  , mPlotBg(plotBg)
+  , mBorderColor(borderColor)
+  , mFillColor(fillColor)
+  , mOutlineColor(outlineColor)
   {
     mIgnoreMouse = false;
   }
@@ -114,20 +124,16 @@ private:
 
   void DrawContent(IGraphics& g, const IRECT& plot)
   {
-    const IColor bg(22, 24, 28);
-    const IColor border(55, 58, 66);
-    const IColor grid(40, 43, 50);
-    const IColor fill(72, 148, 220, 140);
-    const IColor outline(130, 190, 255);
+    const IColor grid(58, 62, 70);
 
-    g.FillRect(bg, mRECT);
-    g.DrawRect(border, mRECT);
+    g.FillRect(mPlotBg, mRECT);
+    g.DrawRect(mBorderColor, mRECT, nullptr, 2.f);
     g.DrawLine(grid, plot.L, plot.MH(), plot.R, plot.MH(), nullptr, 1.f);
 
     if (mMax.size() < 2 || mMin.size() != mMax.size())
       return;
 
-    DrawEnvelope(g, plot, fill, outline);
+    DrawEnvelope(g, plot, mFillColor, mOutlineColor);
   }
 
   void DrawEnvelope(IGraphics& g, const IRECT& plot, const IColor& fill, const IColor& outline) const
@@ -157,6 +163,10 @@ private:
   PlayheadOverlayControl* mPlayheadOverlay = nullptr;
   std::vector<float> mMax;
   std::vector<float> mMin;
+  IColor mPlotBg;
+  IColor mBorderColor;
+  IColor mFillColor;
+  IColor mOutlineColor;
   bool mScrubbing = false;
 };
 

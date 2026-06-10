@@ -15,6 +15,8 @@ public:
   GainKnobControl(const IRECT& bounds, int paramIdx, const char* label, const IVStyle& style)
   : IVKnobControl(bounds, paramIdx, label, style)
   {
+    SetPointerThickness(3.f);
+    SetOuterPointerFrac(1.08f);
   }
 
   void OnMouseDown(float x, float y, const IMouseMod& mod) override
@@ -58,6 +60,13 @@ public:
     IVKnobControl::OnMouseUp(x, y, mod);
     EndInteraction();
     RequestFullRepaint(GetUI());
+  }
+
+  void DrawPointer(IGraphics& g, float angle, float cx, float cy, float radius) override
+  {
+    g.DrawRadialLine(COLOR_BLACK, cx, cy, angle,
+                     mInnerPointerFrac * radius, mOuterPointerFrac * radius,
+                     &mBlend, mPointerThickness);
   }
 
 private:

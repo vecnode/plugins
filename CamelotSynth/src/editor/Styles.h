@@ -7,17 +7,27 @@ namespace CamelotSynthEditor
 
 inline IColor PanelColor()
 {
-  return IColor(34, 36, 42);
+  return IColor(56, 58, 64);
 }
 
 inline IColor PanelBorderColor()
 {
-  return IColor(55, 58, 66);
+  return IColor(72, 76, 84);
+}
+
+inline IColor PanelAccentColor()
+{
+  return IColor(220, 140, 72);
+}
+
+inline IColor SamplerAccentColor()
+{
+  return IColor(96, 186, 132);
 }
 
 inline IColor NoteCircleFillColor()
 {
-  return IColor(88, 92, 100);
+  return IColor(100, 104, 112);
 }
 
 inline IColor NoteCircleLineColor()
@@ -38,9 +48,9 @@ inline IColor CamelotBlockSelectedColor()
 inline IVStyle ControlStyle()
 {
   return DEFAULT_STYLE
-    .WithColor(kBG, IColor(48, 52, 60))
+    .WithColor(kBG, IColor(64, 68, 76))
     .WithColor(kFG, IColor(225, 228, 235))
-    .WithColor(kFR, IColor(72, 78, 90))
+    .WithColor(kFR, IColor(88, 92, 102))
     .WithColor(kPR, IColor(88, 156, 220))
     .WithColor(kHL, IColor(110, 175, 235))
     .WithDrawFrame(true)
@@ -57,8 +67,8 @@ inline IVStyle ButtonStyle()
 inline IVStyle TabStyle()
 {
   return ControlStyle()
-    .WithColor(kBG, IColor(42, 45, 52))
-    .WithColor(kPR, IColor(58, 62, 72))
+    .WithColor(kBG, IColor(52, 55, 62))
+    .WithColor(kPR, IColor(68, 72, 82))
     .WithColor(kHL, IColor(72, 148, 220))
     .WithLabelText(IText(15.f, COLOR_WHITE, "Roboto-Regular", EAlign::Center, EVAlign::Middle));
 }

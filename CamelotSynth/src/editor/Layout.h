@@ -26,7 +26,9 @@ struct Regions
   IRECT noteCircle;
   IRECT gain;
   IRECT waveSection;
+  IRECT waveTitle;
   IRECT waveform;
+  IRECT samplerFooter;
 };
 
 inline Regions ComputeRegions(const IRECT& bounds)
@@ -53,7 +55,12 @@ inline Regions ComputeRegions(const IRECT& bounds)
                    .GetFromRight(C::kGainKnobSize + 8.f)
                    .GetCentredInside(C::kGainKnobSize, C::kGainKnobSize);
 
-  r.waveform = r.waveSection.GetReducedFromTop(22.f).GetPadded(-4.f);
+  r.waveTitle = r.waveSection.GetFromTop(22.f).GetPadded(-8.f);
+
+  const IRECT waveBody = r.waveSection.GetReducedFromTop(22.f).GetPadded(-4.f);
+  const float plotHeight = waveBody.H() * 0.5f;
+  r.waveform = waveBody.GetFromTop(plotHeight);
+  r.samplerFooter = waveBody.GetReducedFromTop(plotHeight);
 
   return r;
 }

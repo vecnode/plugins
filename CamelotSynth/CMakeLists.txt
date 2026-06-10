@@ -37,6 +37,8 @@ set(_camelot_src_modules
   src/ui/controls/PlayheadOverlayControl.h
   src/ui/controls/GainKnobControl.h
   src/ui/controls/CamelotCircleControl.h
+  src/ui/controls/SamplerSectionControl.h
+  src/ui/controls/SamplerFooterControl.h
   src/editor/Layout.h
   src/editor/Styles.h
   src/editor/FramedPanelControl.h
