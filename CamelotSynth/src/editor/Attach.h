@@ -90,6 +90,17 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
     true),
     kCtrlTagDetectNote);
 
+  pGraphics->AttachControl(new IVButtonControl(
+    layout.samplerFooter.pitchUpOne,
+    [&plugin](IControl* pCaller) {
+      plugin.SendParameterValueFromUI(kParamTrigPitchUpOne, 1.);
+      SplashClickActionFunc(pCaller);
+    },
+    "+1",
+    compactButtonStyle,
+    true),
+    kCtrlTagPitchUpOne);
+
   pGraphics->AttachControl(new ::igraphics::DetectedNoteLabelControl(
     layout.samplerFooter.detectedNote,
     TextColor(),

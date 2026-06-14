@@ -15,6 +15,7 @@ enum EParams
   kParamTrigStop,
   kParamSeek,
   kParamTrigDetectNote,
+  kParamTrigPitchUpOne,
   kNumParams
 };
 
@@ -23,7 +24,7 @@ enum EParams
 #include "Smoothers.h"
 #include "WaveformEnvelope.h"
 #include "UiPlayheadBridge.h"
-#include "AsyncSampleAnalyzer.h"
+#include "OfflineSampleWorker.h"
 #endif
 
 enum EControlTags
@@ -34,6 +35,7 @@ enum EControlTags
   kCtrlTagSampleLength = 3,
   kCtrlTagDetectedNote = 4,
   kCtrlTagDetectNote = 5,
+  kCtrlTagPitchUpOne = 6,
   kNumCtrlTags
 };
 
@@ -60,14 +62,16 @@ public:
   void OnIdle() override;
 private:
   void LoadEmbeddedSample();
-  void RebuildAnalysisSnapshot();
+  void RebuildProcessSnapshot();
   void ResetTransportTrigger(int paramIdx);
-  void SyncAnalysisEditorState();
+  void SyncOfflineWorkerState();
 
   SampleTransport mSampleTransport;
   WaveformEnvelope mWaveformEnvelope;
   UiPlayheadBridge mUiPlayheadBridge;
-  AsyncSampleAnalyzer mSampleAnalyzer;
+  OfflineSampleWorker mOfflineWorker;
+  DetectedNote mReferenceNote;
+  float mPitchRequestPlayheadNorm = 0.f;
   IPeakAvgSender<2> mMeterSender;
   LogParamSmooth<sample, 1> mGainSmoother;
 #endif

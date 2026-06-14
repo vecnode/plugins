@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <vector>
 
 BEGIN_IPLUG_NAMESPACE
 
@@ -56,6 +57,33 @@ public:
 
   const sample* GetLeft() const { return mLeft.Get(); }
   const sample* GetRight() const { return mRight.Get(); }
+
+  bool AssignFromFloat(const std::vector<float>& left,
+                       const std::vector<float>& right,
+                       double hostSampleRate)
+  {
+    if (left.empty() || left.size() != right.size())
+    {
+      mLoaded = false;
+      mLength = 0;
+      return false;
+    }
+
+    const int length = static_cast<int>(left.size());
+    mLeft.Resize(length);
+    mRight.Resize(length);
+
+    for (int i = 0; i < length; ++i)
+    {
+      mLeft.Get()[i] = static_cast<sample>(left[static_cast<size_t>(i)]);
+      mRight.Get()[i] = static_cast<sample>(right[static_cast<size_t>(i)]);
+    }
+
+    mLength = length;
+    mHostSampleRate = hostSampleRate;
+    mLoaded = true;
+    return true;
+  }
 
 private:
   static int16_t ReadLE16(const uint8_t* p)

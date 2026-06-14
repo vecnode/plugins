@@ -16,6 +16,7 @@ BEGIN_IPLUG_NAMESPACE
 struct DetectedNote
 {
   bool valid = false;
+  int midiNote = -1;
   float frequencyHz = 0.f;
   float confidence = 0.f;
   char text[40] = "Note: --";
@@ -149,7 +150,25 @@ public:
     result.frequencyHz = static_cast<float>(weightedHz / weightSum);
     result.confidence = static_cast<float>(std::min(1., bestWeight / frames.size()));
     result.valid = true;
+    result.midiNote = bestMidi;
     FormatNoteName(result.frequencyHz, result.text, sizeof(result.text));
+    return result;
+  }
+
+  static DetectedNote Transpose(const DetectedNote& note, int semitones)
+  {
+    DetectedNote result = note;
+    if (!note.valid || note.midiNote < 0)
+    {
+      result.valid = false;
+      result.midiNote = -1;
+      std::snprintf(result.text, sizeof(result.text), "Note: --");
+      return result;
+    }
+
+    result.midiNote = note.midiNote + semitones;
+    result.valid = true;
+    FormatNoteFromMidi(result.midiNote, result.text, sizeof(result.text));
     return result;
   }
 
@@ -185,6 +204,21 @@ private:
     return static_cast<int>(std::lround(69. + 12. * std::log2(hz / 440.)));
   }
 
+  static void FormatNoteFromMidi(int midi, char* out, size_t outSize)
+  {
+    static const char* kNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+
+    int octave = midi / 12 - 1;
+    int pc = midi % 12;
+    if (pc < 0)
+    {
+      pc += 12;
+      --octave;
+    }
+
+    std::snprintf(out, outSize, "Note: %s · Octave %d", kNames[pc], octave);
+  }
+
   static void FormatNoteName(float hz, char* out, size_t outSize)
   {
     static const char* kNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -196,15 +230,7 @@ private:
     }
 
     const int midi = FrequencyToMidi(hz);
-    int octave = midi / 12 - 1;
-    int pc = midi % 12;
-    if (pc < 0)
-    {
-      pc += 12;
-      --octave;
-    }
-
-    std::snprintf(out, outSize, "Note: %s · Octave %d", kNames[pc], octave);
+    FormatNoteFromMidi(midi, out, outSize);
   }
 };
 

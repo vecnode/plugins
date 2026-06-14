@@ -15,8 +15,9 @@ CamelotSynth/
 │   └── fonts/
 └── src/
     ├── analysis/             Offline MIR on the loaded sample (not real-time)
-    │   ├── SampleNoteDetector.h   PitchYIN fundamental → note name
-    │   └── AsyncSampleAnalyzer.h  Background worker; never blocks DSP/UI
+    │   ├── SampleNoteDetector.h    PitchYIN fundamental → note name
+    │   ├── SamplePitchProcessor.h  Offline +N semitone shift (audioFlux pitchShift)
+    │   └── OfflineSampleWorker.h   Background worker; never blocks DSP/UI
     ├── dsp/                  Real-time audio (no IGraphics)
     │   ├── SampleBuffer.h    Decode embedded WAV; hold interleaved channel pointers
     │   ├── SamplePlayer.h    Play / pause / stop / scheduled seek; dip-through-silence
@@ -54,7 +55,8 @@ Regions are computed in `Layout.h` using fixed **row heights** and a shared `Row
 | Middle | flex | Camelot circle + gain knob |
 | Wave title | 22 px | “Sampler” |
 | Wave plot | 50% of wave body | Waveform + playhead |
-| Wave footer | 50% of wave body | Detect Note · **Note: …** · Length: …s |
+| Wave footer | 50% of wave body | Row 1: Detect Note · **Note: …** · Length: …s |
+| | | Row 2: **+1** (pitch up one semitone, under Detect) |
 
 Compact button size: `100×44` design base at `0.5` scale → **50×22** px (transport and Detect Note).
 
@@ -67,21 +69,21 @@ Triggered by **Detect Note**. Analysis runs on a **dedicated worker thread** —
 ```
 UI click → kParamTrigDetectNote → OnParamChange (O(1) queue only)
                                         ↓
-                              AsyncSampleAnalyzer worker
+                              OfflineSampleWorker
                                         ↓
-                              OnIdle → SyncAnalysisEditorState → footer label
+                              OnIdle → SyncOfflineWorkerState → footer label
 ```
 
 | Thread | Work |
 |--------|------|
-| Audio (`ProcessBlock`) | Sample playback, gain, metering only |
-| Audio/UI (`OnParamChange`) | Queue analysis job; copy snapshot already prepared at load |
-| Worker | `SampleNoteDetector::AnalyzeMono` (audioFlux YIN) |
-| UI (`OnIdle`) | Poll result, update label, enable/disable button |
+| Audio (`ProcessBlock`) | Sample playback, gain, metering; **atomic buffer swap** at block start when pitch job completes |
+| Audio/UI (`OnParamChange`) | Queue detect/pitch jobs; copy snapshot already prepared at load |
+| Worker | YIN detect or audioFlux pitch shift (+1 semitone) |
+| UI (`OnIdle`) | Poll result, update label/waveform, enable/disable buttons |
 
-Mono snapshot is built once when the embedded WAV loads (`RebuildAnalysisSnapshot`). The worker reads that immutable copy — no races with playback.
+Mono/stereo snapshot is built once when the embedded WAV loads (`RebuildProcessSnapshot`). The worker reads that immutable copy — no races with playback.
 
-### Algorithm
+### Algorithm (detect)
 
 | Step | Detail |
 |------|--------|
@@ -92,21 +94,42 @@ Mono snapshot is built once when the embedded WAV loads (`RebuildAnalysisSnapsho
 | Range | 27–2000 Hz; YIN threshold **0.12** |
 | Gating | Per-frame RMS + YIN confidence (`minArr`); discard weak frames |
 | Aggregation | Weighted **MIDI histogram** (±1 semitone refine) → robust fundamental for pads/chords |
-| Output | `Note: D5` (12-TET, A4=440); `confidence` stored for future UI |
+| Output | `Note: D · Octave 5` (12-TET, A4=440); MIDI note stored as reference for pitch jobs |
 
 Reference: de Cheveigné & Kawahara, *YIN, a fundamental frequency estimator for speech and music*, JASA 2002.
+
+## Pitch +1 (offline process, real-time playback)
+
+The **+1** button (footer row 2, under Detect) shifts the loaded sample **up one semitone** using the detected note as reference (e.g. D Octave 5 → E Octave 5). audioFlux `pitchShiftObj_pitchShift` is **batch/offline** (phase vocoder + time-stretch + resample), so heavy work never runs in `ProcessBlock`.
+
+### Flow
+
+```
+Detect Note → mReferenceNote (MIDI + label)
++1 click    → save playhead norm → queue PitchUpOne on worker
+Worker      → SamplePitchProcessor::ShiftBySemitones(+1) on L/R
+OnIdle      → rebuild waveform envelope, StageProcessedBuffer(), update label
+ProcessBlock → ApplyPendingSwapIfReady() swaps sample buffer at block boundary (playhead preserved)
+```
+
+| Constraint | Detail |
+|------------|--------|
+| Enabled when | Detect succeeded (`mReferenceNote.valid`) and worker idle |
+| Disabled while | Worker busy (detect or pitch) |
+| RT safety | Worker writes to staging buffer; DSP only atomically swaps pointers at block start |
 
 ### Planned follow-ups
 
 - Map `DetectedNote` → Camelot circle block highlight
 - Real-time tracking while playing (separate low-latency path; offline detect stays on worker)
+- Additional semitone steps (−1, +12, etc.) using the same worker + swap pattern
 
 ## Libraries
 
 | Library | Location | Role |
 |---------|----------|------|
 | [iPlug2](https://github.com/iPlug2/iPlug2) | Sibling `../iPlug2` | Plugin framework, VST3 host API, IGraphics UI |
-| [audioFlux](https://github.com/libAudioFlux/audioFlux) | `../third_party/audioFlux` | Pitch / MIR analysis (YIN C API) |
+| [audioFlux](https://github.com/libAudioFlux/audioFlux) | `../third_party/audioFlux` | PitchYIN detect + offline pitch shift (C API) |
 
 ### Third-party setup (once)
 

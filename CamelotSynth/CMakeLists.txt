@@ -37,7 +37,8 @@ set(_camelot_src_modules
   src/dsp/SampleTransport.h
   src/model/WaveformEnvelope.h
   src/analysis/SampleNoteDetector.h
-  src/analysis/AsyncSampleAnalyzer.h
+  src/analysis/SamplePitchProcessor.h
+  src/analysis/OfflineSampleWorker.h
   src/ui/bridge/UiPlayheadBridge.h
   src/ui/bridge/UiPaintPolicy.h
   src/ui/controls/WaveformControl.h

@@ -45,6 +45,10 @@ target_compile_definitions(audioflux
 
 if(MSVC)
   target_compile_options(audioflux PRIVATE /W3 /wd4244 /wd4267 /wd4996)
+  set_source_files_properties(
+    "${AUDIOFLUX_SRC}/vector/flux_vectorOp.c"
+    PROPERTIES COMPILE_OPTIONS "/FI${CMAKE_CURRENT_SOURCE_DIR}/audioflux_exp2f.h"
+  )
 else()
   target_compile_options(audioflux PRIVATE -Wno-unused-parameter -Wno-sign-compare)
 endif()
@@ -53,4 +57,5 @@ set_target_properties(audioflux PROPERTIES
   C_STANDARD 99
   C_STANDARD_REQUIRED ON
   POSITION_INDEPENDENT_CODE ON
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
 )

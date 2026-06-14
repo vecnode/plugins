@@ -2,6 +2,7 @@
 #include "CamelotSynthEditor.h"
 #include "WaveformControl.h"
 #include "UiPaintPolicy.h"
+#include "SampleBuffer.h"
 #include "IPlug_include_in_plug_src.h"
 
 namespace
@@ -20,6 +21,7 @@ CamelotSynth::CamelotSynth(const InstanceInfo& info)
   GetParam(kParamTrigStop)->InitBool("Stop", false, "", kHiddenTransportFlags);
   GetParam(kParamSeek)->InitDouble("Seek", 0., 0., 1., 0.001, "", kHiddenTransportFlags);
   GetParam(kParamTrigDetectNote)->InitBool("Detect Note", false, "", kHiddenTransportFlags);
+  GetParam(kParamTrigPitchUpOne)->InitBool("Pitch +1", false, "", kHiddenTransportFlags);
 
 #if IPLUG_EDITOR
   mMakeGraphicsFunc = [&]() {
@@ -40,7 +42,6 @@ void CamelotSynth::OnUIOpen()
   Plugin::OnUIOpen();
   mEditorPaintPrimed = false;
 
-  // Full-surface repaint when the host opens the editor (avoids host background bleed).
   if (auto* pGraphics = GetUI())
     ::igraphics::ForceInitialFullPaint(pGraphics);
 }
@@ -63,13 +64,11 @@ void CamelotSynth::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
 
 void CamelotSynth::OnIdle()
 {
-  // Meter peaks are sent here; each update marks the meter control dirty on the UI thread.
   mMeterSender.TransmitData(*this);
 
 #if IPLUG_EDITOR
   if (auto* pGraphics = GetUI())
   {
-    // Graphics may not paint until the first idle tick after LayoutUI; prime once here too.
     if (!mEditorPaintPrimed)
     {
       mEditorPaintPrimed = true;
@@ -97,48 +96,102 @@ void CamelotSynth::OnIdle()
       mUiPlayheadBridge.ClearPlayheadForce();
     }
 
-    SyncAnalysisEditorState();
+    SyncOfflineWorkerState();
   }
 #endif
 }
 
-void CamelotSynth::SyncAnalysisEditorState()
+void CamelotSynth::SyncOfflineWorkerState()
 {
 #if IPLUG_EDITOR
   if (auto* pGraphics = GetUI())
   {
-    AsyncSampleAnalyzer::Phase phase = AsyncSampleAnalyzer::Phase::Idle;
-    DetectedNote note;
-    if (!mSampleAnalyzer.ConsumeEditorUpdate(phase, note))
-      return;
+    const bool workerBusy = mOfflineWorker.IsBusy();
+    const bool hasReference = mReferenceNote.valid;
 
-    if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
+    if (auto* pPitchButton = pGraphics->GetControlWithTag(kCtrlTagPitchUpOne))
     {
-      auto* pLabel = pNote->As<::igraphics::DetectedNoteLabelControl>();
-      switch (phase)
-      {
-        case AsyncSampleAnalyzer::Phase::Queued:
-        case AsyncSampleAnalyzer::Phase::Running:
-          pLabel->SetAnalyzing();
-          break;
-        case AsyncSampleAnalyzer::Phase::Succeeded:
-          pLabel->SetText(note.text);
-          break;
-        case AsyncSampleAnalyzer::Phase::Failed:
-          pLabel->SetText("Note: --");
-          break;
-        default:
-          break;
-      }
-      ::igraphics::RequestControlRepaint(pNote);
+      pPitchButton->SetDisabled(workerBusy || !hasReference);
+      ::igraphics::RequestControlRepaint(pPitchButton);
     }
 
-    if (auto* pButton = pGraphics->GetControlWithTag(kCtrlTagDetectNote))
+    if (auto* pDetectButton = pGraphics->GetControlWithTag(kCtrlTagDetectNote))
     {
-      const bool busy = phase == AsyncSampleAnalyzer::Phase::Queued
-                     || phase == AsyncSampleAnalyzer::Phase::Running;
-      pButton->SetDisabled(busy);
-      ::igraphics::RequestControlRepaint(pButton);
+      pDetectButton->SetDisabled(workerBusy);
+      ::igraphics::RequestControlRepaint(pDetectButton);
+    }
+
+    OfflineSampleWorker::Phase phase = OfflineSampleWorker::Phase::Idle;
+    DetectedNote detectNote;
+    if (mOfflineWorker.ConsumeDetectUpdate(phase, detectNote))
+    {
+      if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
+      {
+        auto* pLabel = pNote->As<::igraphics::DetectedNoteLabelControl>();
+        switch (phase)
+        {
+          case OfflineSampleWorker::Phase::Queued:
+          case OfflineSampleWorker::Phase::Running:
+            pLabel->SetAnalyzing();
+            break;
+          case OfflineSampleWorker::Phase::Succeeded:
+            mReferenceNote = detectNote;
+            pLabel->SetText(detectNote.text);
+            break;
+          case OfflineSampleWorker::Phase::Failed:
+            mReferenceNote = {};
+            pLabel->SetText("Note: --");
+            break;
+          default:
+            break;
+        }
+        ::igraphics::RequestControlRepaint(pNote);
+      }
+    }
+
+    OfflineSampleWorker::PitchResult pitchResult;
+    if (mOfflineWorker.ConsumePitchUpdate(phase, pitchResult))
+    {
+      if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
+      {
+        auto* pLabel = pNote->As<::igraphics::DetectedNoteLabelControl>();
+        switch (phase)
+        {
+          case OfflineSampleWorker::Phase::Queued:
+          case OfflineSampleWorker::Phase::Running:
+            pLabel->SetAnalyzing();
+            break;
+          case OfflineSampleWorker::Phase::Succeeded:
+            if (pitchResult.ok)
+            {
+              SampleBuffer preview;
+              preview.AssignFromFloat(pitchResult.left,
+                                      pitchResult.right,
+                                      mSampleTransport.GetBuffer().GetHostSampleRate());
+              mWaveformEnvelope.BuildFrom(preview, kWaveformPoints);
+              mReferenceNote = pitchResult.note;
+
+              mSampleTransport.StageProcessedBuffer(std::move(pitchResult.left),
+                                                    std::move(pitchResult.right),
+                                                    preview.GetHostSampleRate(),
+                                                    mPitchRequestPlayheadNorm);
+              RebuildProcessSnapshot();
+              mUiPlayheadBridge.MarkPlayheadDirty();
+              pLabel->SetText(mReferenceNote.text);
+            }
+            else
+            {
+              pLabel->SetText("Note: --");
+            }
+            break;
+          case OfflineSampleWorker::Phase::Failed:
+            pLabel->SetText(mReferenceNote.valid ? mReferenceNote.text : "Note: --");
+            break;
+          default:
+            break;
+        }
+        ::igraphics::RequestControlRepaint(pNote);
+      }
     }
   }
 #else
@@ -152,6 +205,7 @@ void CamelotSynth::OnReset()
   mGainSmoother.SetSmoothTime(kGainSmoothMs, GetSampleRate());
   mGainSmoother.SetValue(static_cast<sample>(GetParam(kParamGain)->Value() / 100.));
   mSampleTransport.SetSampleRate(GetSampleRate());
+  mReferenceNote = {};
   LoadEmbeddedSample();
 }
 
@@ -160,29 +214,36 @@ void CamelotSynth::LoadEmbeddedSample()
   if (mSampleTransport.LoadEmbedded(ATMOS_SAMPLE_FN, GetSampleRate()))
   {
     mWaveformEnvelope.BuildFrom(mSampleTransport.GetBuffer(), kWaveformPoints);
-    RebuildAnalysisSnapshot();
+    RebuildProcessSnapshot();
   }
 }
 
-void CamelotSynth::RebuildAnalysisSnapshot()
+void CamelotSynth::RebuildProcessSnapshot()
 {
   const SampleBuffer& buffer = mSampleTransport.GetBuffer();
   if (!buffer.IsLoaded())
   {
-    mSampleAnalyzer.SetSnapshot({});
+    mOfflineWorker.SetSnapshot({});
     return;
   }
 
-  AsyncSampleAnalyzer::Snapshot snapshot;
+  OfflineSampleWorker::Snapshot snapshot;
+  const int length = buffer.GetLength();
   snapshot.sampleRate = static_cast<int>(std::lround(buffer.GetHostSampleRate()));
-  snapshot.mono.resize(static_cast<size_t>(buffer.GetLength()));
+  snapshot.mono.resize(static_cast<size_t>(length));
+  snapshot.left.resize(static_cast<size_t>(length));
+  snapshot.right.resize(static_cast<size_t>(length));
 
   const sample* left = buffer.GetLeft();
   const sample* right = buffer.GetRight();
-  for (int i = 0; i < buffer.GetLength(); ++i)
+  for (int i = 0; i < length; ++i)
+  {
+    snapshot.left[static_cast<size_t>(i)] = static_cast<float>(left[i]);
+    snapshot.right[static_cast<size_t>(i)] = static_cast<float>(right[i]);
     snapshot.mono[static_cast<size_t>(i)] = static_cast<float>((left[i] + right[i]) * 0.5);
+  }
 
-  mSampleAnalyzer.SetSnapshot(std::move(snapshot));
+  mOfflineWorker.SetSnapshot(std::move(snapshot));
 }
 
 void CamelotSynth::ResetTransportTrigger(int paramIdx)
@@ -238,11 +299,21 @@ void CamelotSynth::OnParamChange(int paramIdx, EParamSource source, int sampleOf
         if (!mSampleTransport.IsSampleLoaded())
           LoadEmbeddedSample();
         else
-          RebuildAnalysisSnapshot();
+          RebuildProcessSnapshot();
 
-        mSampleAnalyzer.RequestAnalysis();
+        mOfflineWorker.RequestDetect();
       }
       ResetTransportTrigger(kParamTrigDetectNote);
+      break;
+
+    case kParamTrigPitchUpOne:
+      if (GetParam(kParamTrigPitchUpOne)->Bool() && mReferenceNote.valid)
+      {
+        mPitchRequestPlayheadNorm = mSampleTransport.GetPlayheadNorm();
+        RebuildProcessSnapshot();
+        mOfflineWorker.RequestPitchUpOne(mReferenceNote);
+      }
+      ResetTransportTrigger(kParamTrigPitchUpOne);
       break;
 
     default:

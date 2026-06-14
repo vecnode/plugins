@@ -90,12 +90,15 @@ struct TransportButtons
   IRECT stop;
 };
 
-struct SamplerFooterRow
+struct SamplerFooterLayout
 {
   IRECT panel;
+  IRECT rowDetect;
+  IRECT rowPitch;
   IRECT detectNote;
   IRECT detectedNote;
   IRECT length;
+  IRECT pitchUpOne;
 };
 
 struct Regions
@@ -110,7 +113,7 @@ struct Regions
   IRECT waveTitle;
   IRECT waveform;
   TransportButtons transportButtons;
-  SamplerFooterRow samplerFooter;
+  SamplerFooterLayout samplerFooter;
 };
 
 inline TransportButtons ComputeTransportButtons(const IRECT& transportRegion)
@@ -128,17 +131,28 @@ inline TransportButtons ComputeTransportButtons(const IRECT& transportRegion)
   return buttons;
 }
 
-inline SamplerFooterRow ComputeSamplerFooterRow(const IRECT& footerBounds)
+inline SamplerFooterLayout ComputeSamplerFooter(const IRECT& footerBounds)
 {
   using C = LayoutConstants;
 
-  SamplerFooterRow layout;
+  SamplerFooterLayout layout;
   layout.panel = footerBounds;
 
-  RowLayout row(RowContent(footerBounds), C::kRowGap);
-  layout.detectNote = row.TakeFixed(C::kDetectNoteButtonWidth, CompactButtonHeight());
-  layout.detectedNote = row.TakeShare(C::kFooterDetectedNoteShare);
-  layout.length = row.Remainder();
+  const IRECT padded = footerBounds.GetPadded(-C::kInnerPadding);
+  const float rowGap = 4.f;
+  const float rowH = (padded.H() - rowGap) * 0.5f;
+
+  layout.rowDetect = IRECT(padded.L, padded.T, padded.R, padded.T + rowH);
+  layout.rowPitch = IRECT(padded.L, layout.rowDetect.B + rowGap, padded.R, padded.B);
+
+  RowLayout detectRow(RowContent(layout.rowDetect), C::kRowGap);
+  layout.detectNote = detectRow.TakeFixed(C::kDetectNoteButtonWidth, CompactButtonHeight());
+  layout.detectedNote = detectRow.TakeShare(C::kFooterDetectedNoteShare);
+  layout.length = detectRow.Remainder();
+
+  RowLayout pitchRow(RowContent(layout.rowPitch), C::kRowGap);
+  layout.pitchUpOne = pitchRow.TakeFixed(CompactButtonWidth(), CompactButtonHeight());
+
   return layout;
 }
 
@@ -174,7 +188,7 @@ inline Regions ComputeRegions(const IRECT& bounds)
   r.waveform = waveBody.GetFromTop(plotHeight);
 
   r.transportButtons = ComputeTransportButtons(r.transport);
-  r.samplerFooter = ComputeSamplerFooterRow(footerBounds);
+  r.samplerFooter = ComputeSamplerFooter(footerBounds);
 
   return r;
 }

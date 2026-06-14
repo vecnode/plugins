@@ -4,6 +4,9 @@
 #include "SamplePlayer.h"
 #include "Smoothers.h"
 
+#include <atomic>
+#include <vector>
+
 BEGIN_IPLUG_NAMESPACE
 
 /**
@@ -60,12 +63,39 @@ public:
 
   void ProcessBlock(sample** outputs, int nOutputs, int nFrames, sample targetGain, LogParamSmooth<sample, 1>& gainSmoother)
   {
+    ApplyPendingSwapIfReady();
     mPlayer.ProcessBlock(outputs, nOutputs, nFrames, targetGain, gainSmoother);
   }
 
   bool IsPlaying() const { return mPlayer.IsPlaying(); }
 
   float GetPlayheadNorm() const { return mPlayer.GetPlayheadNorm(); }
+
+  /** Apply a buffer prepared on the worker thread — call at the start of ProcessBlock only. */
+  void ApplyPendingSwapIfReady()
+  {
+    if (!mSwapPending.load(std::memory_order_acquire))
+      return;
+
+    mSwapPending.store(false, std::memory_order_release);
+
+    mBuffer.AssignFromFloat(mStagingLeft, mStagingRight, mStagingSampleRate);
+    mPlayer.SetBuffer(mBuffer);
+    mPlayer.SilentSeekToNorm(mStagingPlayheadNorm);
+    mWaveformDirty = true;
+  }
+
+  void StageProcessedBuffer(std::vector<float>&& left,
+                            std::vector<float>&& right,
+                            double sampleRate,
+                            float playheadNorm)
+  {
+    mStagingLeft = std::move(left);
+    mStagingRight = std::move(right);
+    mStagingSampleRate = sampleRate;
+    mStagingPlayheadNorm = playheadNorm;
+    mSwapPending.store(true, std::memory_order_release);
+  }
 
   bool ConsumeWaveformDirty()
   {
@@ -80,6 +110,12 @@ private:
   SampleBuffer mBuffer;
   SamplePlayer mPlayer;
   bool mWaveformDirty = false;
+
+  std::vector<float> mStagingLeft;
+  std::vector<float> mStagingRight;
+  double mStagingSampleRate = 44100.;
+  float mStagingPlayheadNorm = 0.f;
+  std::atomic<bool> mSwapPending {false};
 };
 
 END_IPLUG_NAMESPACE

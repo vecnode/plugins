@@ -177,6 +177,12 @@ public:
     return static_cast<float>(mReadHeadFrac / static_cast<double>(mLength - 1));
   }
 
+  void SilentSeekToNorm(float norm)
+  {
+    ApplySilentSeek(NormalizedToPosition(norm));
+    mPlayhead.store(static_cast<int>(mReadHeadFrac));
+  }
+
 private:
   static constexpr double kSeekCrossfadeMs = 20.;
   static constexpr double kTransportFadeMs = 12.;
