@@ -47,6 +47,13 @@ public:
 
   bool IsLoaded() const { return mLoaded; }
   int GetLength() const { return mLength; }
+  double GetHostSampleRate() const { return mHostSampleRate; }
+
+  double GetDurationSeconds() const
+  {
+    return (mLoaded && mHostSampleRate > 0.) ? static_cast<double>(mLength) / mHostSampleRate : 0.;
+  }
+
   const sample* GetLeft() const { return mLeft.Get(); }
   const sample* GetRight() const { return mRight.Get(); }
 

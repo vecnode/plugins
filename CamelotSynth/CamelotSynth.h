@@ -14,6 +14,7 @@ enum EParams
   kParamTrigPause,
   kParamTrigStop,
   kParamSeek,
+  kParamTrigDetectNote,
   kNumParams
 };
 
@@ -22,6 +23,7 @@ enum EParams
 #include "Smoothers.h"
 #include "WaveformEnvelope.h"
 #include "UiPlayheadBridge.h"
+#include "AsyncSampleAnalyzer.h"
 #endif
 
 enum EControlTags
@@ -29,6 +31,9 @@ enum EControlTags
   kCtrlTagMeter = 0,
   kCtrlTagWaveform = 1,
   kCtrlTagPlayhead = 2,
+  kCtrlTagSampleLength = 3,
+  kCtrlTagDetectedNote = 4,
+  kCtrlTagDetectNote = 5,
   kNumCtrlTags
 };
 
@@ -39,6 +44,7 @@ class CamelotSynth final : public Plugin
 {
 public:
   CamelotSynth(const InstanceInfo& info);
+  ~CamelotSynth();
 
 #if IPLUG_EDITOR
   void OnUIOpen() override;
@@ -54,11 +60,14 @@ public:
   void OnIdle() override;
 private:
   void LoadEmbeddedSample();
+  void RebuildAnalysisSnapshot();
   void ResetTransportTrigger(int paramIdx);
+  void SyncAnalysisEditorState();
 
   SampleTransport mSampleTransport;
   WaveformEnvelope mWaveformEnvelope;
   UiPlayheadBridge mUiPlayheadBridge;
+  AsyncSampleAnalyzer mSampleAnalyzer;
   IPeakAvgSender<2> mMeterSender;
   LogParamSmooth<sample, 1> mGainSmoother;
 #endif

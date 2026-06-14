@@ -33,3 +33,6 @@ gui/
 
 assets/
 *.wav
+
+# Vendored upstream sources (fetched by scripts/setup-third-party.ps1)
+third_party/*/upstream/

@@ -27,12 +27,17 @@ endif()
 include(${IPLUG2_DIR}/iPlug2.cmake)
 find_package(iPlug2 REQUIRED)
 
+set(_third_party_dir "${CMAKE_CURRENT_SOURCE_DIR}/../third_party")
+add_subdirectory("${_third_party_dir}/audioFlux" "${CMAKE_BINARY_DIR}/third_party/audioFlux")
+
 set(_camelot_src_modules
   src/dsp/OutputLimiter.h
   src/dsp/SampleBuffer.h
   src/dsp/SamplePlayer.h
   src/dsp/SampleTransport.h
   src/model/WaveformEnvelope.h
+  src/analysis/SampleNoteDetector.h
+  src/analysis/AsyncSampleAnalyzer.h
   src/ui/bridge/UiPlayheadBridge.h
   src/ui/bridge/UiPaintPolicy.h
   src/ui/controls/WaveformControl.h
@@ -66,6 +71,7 @@ iplug_add_plugin(${PROJECT_NAME}
 set(_camelot_include_dirs
   ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/model
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/analysis
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/bridge
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/controls
   ${CMAKE_CURRENT_SOURCE_DIR}/src/editor
@@ -74,6 +80,7 @@ set(_camelot_include_dirs
 foreach(_fmt vst3 vst2 clap aax app)
   if(TARGET ${PROJECT_NAME}-${_fmt})
     target_include_directories(${PROJECT_NAME}-${_fmt} PRIVATE ${_camelot_include_dirs})
+    target_link_libraries(${PROJECT_NAME}-${_fmt} PRIVATE audioflux)
   endif()
 endforeach()
 

@@ -1,20 +1,101 @@
 #pragma once
 
 #include "IGraphics.h"
+#include <algorithm>
 
 namespace CamelotSynthEditor
 {
 
-/** Fixed layout constants (see src/ARCHITECTURE.md). */
+/** Fixed layout constants — row heights and gaps; cell widths come from RowLayout helpers. */
 struct LayoutConstants
 {
   static constexpr float kPadding = 16.f;
+  static constexpr float kInnerPadding = 8.f;
+  static constexpr float kSectionGap = 8.f;
+  static constexpr float kRowGap = 8.f;
+
   static constexpr float kMeterWidth = 44.f;
   static constexpr float kTabHeight = 40.f;
   static constexpr float kTransportHeight = 56.f;
   static constexpr float kWaveSectionHeight = 210.f;
+  static constexpr float kWaveTitleHeight = 22.f;
+  static constexpr float kWavePlotFraction = 0.5f;
+
   static constexpr float kGainKnobSize = 96.f;
   static constexpr float kNoteCircleDiameter = 460.f;
+
+  static constexpr float kCompactButtonBaseW = 100.f;
+  static constexpr float kCompactButtonBaseH = 44.f;
+  static constexpr float kCompactButtonScale = 0.5f;
+
+  static constexpr float kDetectNoteButtonWidth = 84.f;
+  static constexpr float kFooterDetectedNoteShare = 0.42f;
+};
+
+/** Horizontal row splitter — fixed-width cells from the left, remainder for the last column. */
+struct RowLayout
+{
+  RowLayout(const IRECT& row, float gap)
+  : mCursor(row)
+  , mGap(gap)
+  {
+  }
+
+  IRECT TakeFixed(float width, float height)
+  {
+    const float clampedW = std::min(width, mCursor.W());
+    const IRECT slot(mCursor.L, mCursor.T, mCursor.L + clampedW, mCursor.B);
+    IRECT cell = slot.GetCentredInside(clampedW, height);
+    mCursor.L = slot.R + mGap;
+    return cell;
+  }
+
+  IRECT TakeShare(float fraction)
+  {
+    const float clampedW = std::max(0.f, mCursor.W() * fraction);
+    const IRECT cell(mCursor.L, mCursor.T, mCursor.L + clampedW, mCursor.B);
+    mCursor.L = cell.R + mGap;
+    return cell;
+  }
+
+  IRECT Remainder() const
+  {
+    return mCursor;
+  }
+
+private:
+  IRECT mCursor;
+  float mGap;
+};
+
+inline float CompactButtonWidth()
+{
+  return LayoutConstants::kCompactButtonBaseW * LayoutConstants::kCompactButtonScale;
+}
+
+inline float CompactButtonHeight()
+{
+  return LayoutConstants::kCompactButtonBaseH * LayoutConstants::kCompactButtonScale;
+}
+
+inline IRECT RowContent(const IRECT& region)
+{
+  return region.GetPadded(-LayoutConstants::kInnerPadding);
+}
+
+struct TransportButtons
+{
+  IRECT start;
+  IRECT pause;
+  IRECT stop;
+};
+
+struct SamplerFooterRow
+{
+  IRECT panel;
+  IRECT detectNote;
+  IRECT detectedNote;
+  IRECT length;
 };
 
 struct Regions
@@ -28,8 +109,38 @@ struct Regions
   IRECT waveSection;
   IRECT waveTitle;
   IRECT waveform;
-  IRECT samplerFooter;
+  TransportButtons transportButtons;
+  SamplerFooterRow samplerFooter;
 };
+
+inline TransportButtons ComputeTransportButtons(const IRECT& transportRegion)
+{
+  using C = LayoutConstants;
+
+  RowLayout row(RowContent(transportRegion), C::kRowGap);
+  const float btnW = CompactButtonWidth();
+  const float btnH = CompactButtonHeight();
+
+  TransportButtons buttons;
+  buttons.start = row.TakeFixed(btnW, btnH);
+  buttons.pause = row.TakeFixed(btnW, btnH);
+  buttons.stop = row.TakeFixed(btnW, btnH);
+  return buttons;
+}
+
+inline SamplerFooterRow ComputeSamplerFooterRow(const IRECT& footerBounds)
+{
+  using C = LayoutConstants;
+
+  SamplerFooterRow layout;
+  layout.panel = footerBounds;
+
+  RowLayout row(RowContent(footerBounds), C::kRowGap);
+  layout.detectNote = row.TakeFixed(C::kDetectNoteButtonWidth, CompactButtonHeight());
+  layout.detectedNote = row.TakeShare(C::kFooterDetectedNoteShare);
+  layout.length = row.Remainder();
+  return layout;
+}
 
 inline Regions ComputeRegions(const IRECT& bounds)
 {
@@ -39,28 +150,31 @@ inline Regions ComputeRegions(const IRECT& bounds)
   const IRECT padded = bounds.GetPadded(-C::kPadding);
 
   r.meter = padded.GetFromRight(C::kMeterWidth);
-  const IRECT content = padded.GetReducedFromRight(C::kMeterWidth + 10.f);
+  const IRECT content = padded.GetReducedFromRight(C::kMeterWidth + C::kSectionGap);
 
   r.tabBar = content.GetFromTop(C::kTabHeight);
 
-  const IRECT belowTab = content.GetReducedFromTop(C::kTabHeight + 8.f);
+  const IRECT belowTab = content.GetReducedFromTop(C::kTabHeight + C::kSectionGap);
   r.transport = belowTab.GetFromTop(C::kTransportHeight);
 
   r.waveSection = content.GetFromBottom(C::kWaveSectionHeight);
-  r.middle = belowTab.GetReducedFromTop(C::kTransportHeight + 8.f)
-                    .GetReducedFromBottom(C::kWaveSectionHeight + 8.f);
+  r.middle = belowTab.GetReducedFromTop(C::kTransportHeight + C::kSectionGap)
+                    .GetReducedFromBottom(C::kWaveSectionHeight + C::kSectionGap);
   r.noteCircle = r.middle.GetCentredInside(C::kNoteCircleDiameter, C::kNoteCircleDiameter);
 
-  r.gain = r.middle.GetFromBottom(C::kGainKnobSize + 8.f)
-                   .GetFromRight(C::kGainKnobSize + 8.f)
+  r.gain = r.middle.GetFromBottom(C::kGainKnobSize + C::kSectionGap)
+                   .GetFromRight(C::kGainKnobSize + C::kSectionGap)
                    .GetCentredInside(C::kGainKnobSize, C::kGainKnobSize);
 
-  r.waveTitle = r.waveSection.GetFromTop(22.f).GetPadded(-8.f);
+  r.waveTitle = r.waveSection.GetFromTop(C::kWaveTitleHeight).GetPadded(-C::kInnerPadding);
 
-  const IRECT waveBody = r.waveSection.GetReducedFromTop(22.f).GetPadded(-4.f);
-  const float plotHeight = waveBody.H() * 0.5f;
+  const IRECT waveBody = r.waveSection.GetReducedFromTop(C::kWaveTitleHeight).GetPadded(-4.f);
+  const float plotHeight = waveBody.H() * C::kWavePlotFraction;
+  const IRECT footerBounds = waveBody.GetReducedFromTop(plotHeight);
   r.waveform = waveBody.GetFromTop(plotHeight);
-  r.samplerFooter = waveBody.GetReducedFromTop(plotHeight);
+
+  r.transportButtons = ComputeTransportButtons(r.transport);
+  r.samplerFooter = ComputeSamplerFooterRow(footerBounds);
 
   return r;
 }
