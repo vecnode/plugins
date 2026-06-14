@@ -72,7 +72,7 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
   pGraphics->AttachControl(new ITextControl(
     layout.waveTitle,
     "Sampler",
-    IText(13.f, IColor(176, 182, 192), "Roboto-Regular", EAlign::Near)));
+    IText(13.f, TextColor(), "Roboto-Regular", EAlign::Near)));
 
   pGraphics->AttachControl(new ::igraphics::SamplerFooterControl(
     layout.samplerFooter.panel,
@@ -92,13 +92,13 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
 
   pGraphics->AttachControl(new ::igraphics::DetectedNoteLabelControl(
     layout.samplerFooter.detectedNote,
-    IColor(176, 182, 192),
-    SamplerAccentColor()),
+    TextColor(),
+    TextMutedColor()),
     kCtrlTagDetectedNote);
 
   pGraphics->AttachControl(new ::igraphics::SampleLengthLabelControl(
     layout.samplerFooter.length,
-    IColor(176, 182, 192)),
+    TextColor()),
     kCtrlTagSampleLength);
 
   const IRECT plotBounds = layout.waveform.GetPadded(-6.f);
@@ -107,9 +107,9 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
     layout.waveform,
     MakeSeekHandler(plugin),
     kCtrlTagWaveform,
-    IColor(42, 44, 50),
+    WaveformPlotBgColor(),
     SamplerAccentColor(),
-    IColor(72, 148, 220, 140),
+    WaveformFillColor(),
     SamplerAccentColor());
   pTrack->SetPlayheadOverlay(pPlayhead);
 

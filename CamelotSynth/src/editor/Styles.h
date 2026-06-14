@@ -5,58 +5,83 @@
 namespace CamelotSynthEditor
 {
 
+inline IColor TextColor()
+{
+  return IColor(255, 255, 255);
+}
+
+inline IColor TextMutedColor()
+{
+  return IColor(170, 195, 225);
+}
+
 inline IColor PanelColor()
 {
-  return IColor(56, 58, 64);
+  return IColor(10, 12, 18);
 }
 
 inline IColor PanelBorderColor()
 {
-  return IColor(72, 76, 84);
+  return IColor(48, 68, 96);
 }
 
 inline IColor PanelAccentColor()
 {
-  return IColor(220, 140, 72);
+  return IColor(120, 185, 255);
 }
 
 inline IColor SamplerAccentColor()
 {
-  return IColor(96, 186, 132);
+  return IColor(100, 170, 240);
+}
+
+inline IColor WaveformPlotBgColor()
+{
+  return IColor(6, 8, 14);
+}
+
+inline IColor WaveformFillColor()
+{
+  return IColor(100, 170, 240, 130);
 }
 
 inline IColor NoteCircleFillColor()
 {
-  return IColor(100, 104, 112);
+  return IColor(18, 24, 36);
 }
 
 inline IColor NoteCircleLineColor()
 {
-  return IColor(168, 174, 186);
+  return IColor(140, 190, 245);
 }
 
 inline IColor CamelotBlockActiveColor()
 {
-  return IColor(150, 156, 170);
+  return IColor(65, 95, 135);
 }
 
 inline IColor CamelotBlockSelectedColor()
 {
-  return IColor(72, 148, 220);
+  return IColor(150, 205, 255);
+}
+
+inline IColor PlayheadColor()
+{
+  return IColor(255, 255, 255);
 }
 
 inline IVStyle ControlStyle()
 {
   return DEFAULT_STYLE
-    .WithColor(kBG, IColor(64, 68, 76))
-    .WithColor(kFG, IColor(225, 228, 235))
-    .WithColor(kFR, IColor(88, 92, 102))
-    .WithColor(kPR, IColor(88, 156, 220))
-    .WithColor(kHL, IColor(110, 175, 235))
+    .WithColor(kBG, IColor(16, 20, 30))
+    .WithColor(kFG, TextColor())
+    .WithColor(kFR, IColor(70, 100, 140))
+    .WithColor(kPR, IColor(90, 155, 230))
+    .WithColor(kHL, IColor(140, 200, 255))
     .WithDrawFrame(true)
     .WithDrawShadows(false)
     .WithRoundness(0.f)
-    .WithLabelText(IText(14.f, COLOR_WHITE, "Roboto-Regular", EAlign::Center, EVAlign::Middle));
+    .WithLabelText(IText(14.f, TextColor(), "Roboto-Regular", EAlign::Center, EVAlign::Middle));
 }
 
 inline IVStyle ButtonStyle()
@@ -67,10 +92,10 @@ inline IVStyle ButtonStyle()
 inline IVStyle TabStyle()
 {
   return ControlStyle()
-    .WithColor(kBG, IColor(52, 55, 62))
-    .WithColor(kPR, IColor(68, 72, 82))
-    .WithColor(kHL, IColor(72, 148, 220))
-    .WithLabelText(IText(15.f, COLOR_WHITE, "Roboto-Regular", EAlign::Center, EVAlign::Middle));
+    .WithColor(kBG, IColor(14, 18, 28))
+    .WithColor(kPR, IColor(55, 80, 115))
+    .WithColor(kHL, IColor(120, 185, 255))
+    .WithLabelText(IText(15.f, TextColor(), "Roboto-Regular", EAlign::Center, EVAlign::Middle));
 }
 
 } // namespace CamelotSynthEditor

@@ -48,7 +48,7 @@ public:
   void Draw(IGraphics& g) override
   {
     const float playX = mPlot.L + mNorm * mPlot.W();
-    g.DrawLine(IColor(255, 88, 88), playX, mPlot.T, playX, mPlot.B, nullptr, 2.f);
+    g.DrawLine(IColor(255, 255, 255), playX, mPlot.T, playX, mPlot.B, nullptr, 2.f);
   }
 
 private:

@@ -346,7 +346,7 @@ private:
 
   void DrawBlockLabels(IGraphics& g) const
   {
-    const IColor labelColor(225, 228, 235);
+    const IColor labelColor(255, 255, 255);
 
     for (const BlockRegion& block : mBlocks)
     {

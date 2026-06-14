@@ -5,7 +5,7 @@
 namespace CamelotSynthEditor
 {
 
-/** Non-interactive caption with orange panel border. */
+/** Non-interactive caption with light-blue panel border. */
 class LogoBadgeControl final : public igraphics::IControl
 {
 public:
@@ -20,7 +20,7 @@ public:
   {
     g.FillRect(PanelColor(), mRECT);
     g.DrawRect(PanelAccentColor(), mRECT, nullptr, 2.5f);
-    const IText style(12.f, IColor(176, 182, 192), "Roboto-Regular", EAlign::Center, EVAlign::Middle);
+    const IText style(12.f, TextColor(), "Roboto-Regular", EAlign::Center, EVAlign::Middle);
     g.DrawText(style, mText, mRECT.GetPadded(-4.f));
   }
 

@@ -18,7 +18,7 @@ struct DetectedNote
   bool valid = false;
   float frequencyHz = 0.f;
   float confidence = 0.f;
-  char text[24] = "Note: --";
+  char text[40] = "Note: --";
 };
 
 /** Offline fundamental estimation (audioFlux PitchYIN) — runs off the audio thread only. */
@@ -204,7 +204,7 @@ private:
       --octave;
     }
 
-    std::snprintf(out, outSize, "Note: %s%d", kNames[pc], octave);
+    std::snprintf(out, outSize, "Note: %s · Octave %d", kNames[pc], octave);
   }
 };
 

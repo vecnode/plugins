@@ -45,15 +45,16 @@ private:
   char mText[32] = {};
 };
 
-/** Detected note label — prominent, left-aligned after the Detect Note button. */
+/** Detected note label — white text; accent blue when a result is shown. */
 class DetectedNoteLabelControl : public IControl
 {
 public:
-  DetectedNoteLabelControl(const IRECT& bounds, const IColor& textColor, const IColor& accentColor)
+  DetectedNoteLabelControl(const IRECT& bounds,
+                           const IColor& textColor,
+                           const IColor& mutedColor)
   : IControl(bounds)
   , mTextColor(textColor)
-  , mAccentColor(accentColor)
-  , mMutedColor(textColor.WithOpacity(0.65f))
+  , mMutedColor(mutedColor)
   {
     mIgnoreMouse = true;
     SetText("Note: --");
@@ -86,17 +87,16 @@ public:
 
   void Draw(IGraphics& g) override
   {
-    const IColor& color = mAnalyzing ? mMutedColor : mAccentColor;
+    const IColor& color = mAnalyzing ? mMutedColor : mTextColor;
     const IText textStyle(15.f, color, "Roboto-Regular", EAlign::Near, EVAlign::Middle);
     g.DrawText(textStyle, mText, mRECT);
   }
 
 private:
   IColor mTextColor;
-  IColor mAccentColor;
   IColor mMutedColor;
   bool mAnalyzing = false;
-  char mText[24] = {};
+  char mText[40] = {};
 };
 
 /** Sampler footer panel — single row hosts button, note, and length controls. */
