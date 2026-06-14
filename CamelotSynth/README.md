@@ -1,6 +1,6 @@
 # CamelotSynth
 
-iPlug2 VST3 shell for the [audioagent](../src/audioagent/) sampler library. Playback, gain, RT pitch, and metering run on the **audio thread**; note detection runs on a **background worker**. The editor stays responsive because no heavy MIR work runs in `ProcessBlock`, `OnParamChange`, or the IGraphics paint path.
+iPlug2 VST3 shell for the [audioagent](../src/audioagent/) sampler library. Playback, gain, limiting, and live pitch run on the **audio thread**; note detection runs on a **background worker**. The editor stays responsive because no heavy MIR work runs in `ProcessBlock`, `OnParamChange`, or the IGraphics paint path.
 
 ## Features
 
@@ -10,51 +10,49 @@ iPlug2 VST3 shell for the [audioagent](../src/audioagent/) sampler library. Play
 | Transport | Sample-accurate play / pause / stop / seek via hidden meta parameters |
 | Waveform | 1024-point peak envelope; playhead overlay synced on `OnIdle` |
 | Note detect | audioFlux **PitchYIN** on a worker thread (via audioagent) |
-| Pitch +1 | audioFlux **10 s blocks** with ~20 s read-ahead; continuous pitched playback per ready block |
-| Camelot wheel | audioagent `WheelLayout` geometry; `CamelotCircleControl` draws in IGraphics |
+| Pitch **+1 / −1** | **Latch** at exactly ±1 from detected note until **Reset** or the opposite button |
+| Pitch reset | Returns to detected note |
+| Live pitch (default) | `RTPitchShifter` on audio thread — continuous, crossfaded, no block waits |
+| HPF | Optional 30 Hz high-pass — `kParamHPF` |
+| Output safety | `LimiterStage` — always on, ceiling 0.95 |
+| Camelot wheel | Interactive B1–B36 grid (no auto-highlight from detect) |
 
-## Architecture split
+## Pitch behaviour
 
-| Layer | Location |
-|-------|----------|
-| DSP + MIR + wheel math | [`../src/audioagent/`](../src/audioagent/) — see [README](../src/audioagent/README.md) and [ARCHITECTURE](../src/audioagent/ARCHITECTURE.md) |
-| iPlug2 plugin shell | `CamelotSynth.h/.cpp` — params, `SamplerEngine`, meter |
-| IGraphics UI | `src/ui/`, `src/editor/` |
+1. Click **Detect Note** — stores the reference pitch.
+2. Click **+1** — latches **+1 semitone** until **Reset** or **−1**.
+3. Click **−1** — latches **−1 semitone** until **Reset** or **+1**.
+4. Click **Reset** — back to detected note. Pitch does **not stack**.
 
-## Source layout
+Audio uses the **Live** shifter by default: light real-time processing with dry/wet crossfade — no 10 s block wait and no silence gaps.
+
+## Real-time processing chain
 
 ```
-CamelotSynth/
-├── CamelotSynth.h / .cpp     Params, ProcessBlock, OnIdle — delegates to audioagent::SamplerEngine
-├── CamelotSynthEditor.h      Thin include → src/editor/Attach.h
-├── config.h                  Dimensions, bundle IDs, embedded WAV resource name
-├── CMakeLists.txt            iPlug2 target + links audioagent
-└── src/
-    ├── ui/                   IGraphics controls + Windows paint policy
-    └── editor/               Layout, Styles, Attach
+ProcessBlock (audio thread)
+  ├─ mEngine.ProcessBlock  →  source → transport mix → HPF → gain → limiter
+  └─ peak meter → UI
 ```
+
+| # | Stage | Control |
+|---|-------|---------|
+| 0 | **Source** | Dry sample + optional live `RTPitchShifter` (±1) |
+| 1 | **Transport mix** | Play / pause / stop / seek crossfades |
+| 2 | **HPF** | `kParamHPF` (off by default) |
+| 3 | **Gain** | `kParamGain` |
+| 4 | **Limiter** | Always on |
+
+Background: **Detect note** only (`OfflineSampleWorker`).
 
 ## UI layout
 
-Row-based regions from `Layout.h`:
-
 | Row | Contents |
 |-----|----------|
-| Tab bar | Logo badge |
 | Transport | Start · Pause · Stop |
 | Middle | Camelot circle + gain knob |
-| Wave title | “Sampler” |
-| Wave plot | Waveform + playhead overlay |
-| Footer row 1 | Detect Note · **Note: …** · Length |
-| Footer row 2 | **+1** (under Detect) |
-
-## Libraries
-
-| Library | Location | Role |
-|---------|----------|------|
-| [audioagent](../src/audioagent/) | `src/audioagent` | DSP, MIR, Camelot wheel geometry |
-| [iPlug2](https://github.com/iPlug2/iPlug2) | Sibling `../iPlug2` | VST3 framework, IGraphics, parameters |
-| [audioFlux](https://github.com/libAudioFlux/audioFlux) | `third_party/audioFlux` | Linked by audioagent |
+| Wave plot | Waveform + playhead |
+| Footer | Detect · Note label · Length |
+| Footer pitch | **−1 · +1 · Reset · Live** switch |
 
 ## Build & install
 
@@ -63,11 +61,6 @@ Row-based regions from `Layout.h`:
 .\scripts\build.ps1 -Plugin CamelotSynth -Format vst3 -Config Release -Install
 ```
 
-Output: `CamelotSynth/build/out/CamelotSynth.vst3/`  
-Install: `%LOCALAPPDATA%\Programs\Common\VST3\CamelotSynth.vst3` (close the host before reinstalling).
+Output: `CamelotSynth/build/out/CamelotSynth.vst3/`
 
-## Planned extensions
-
-- Real-time pitch while playing (implemented via `RTPitchShifter`)
-- Highlight detected note on the Camelot circle
-- Additional semitone steps (−1) and pitch reset control
+See [../src/audioagent/README.md](../src/audioagent/README.md) and [../DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md).

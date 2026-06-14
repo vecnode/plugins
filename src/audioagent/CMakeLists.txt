@@ -23,6 +23,7 @@ target_include_directories(audioagent INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/analysis
   ${CMAKE_CURRENT_SOURCE_DIR}/model
   ${CMAKE_CURRENT_SOURCE_DIR}/camelot
+  ${CMAKE_CURRENT_SOURCE_DIR}/platform
   ${IPLUG2_DIR}/IPlug
   ${IPLUG2_DIR}/WDL
 )

@@ -110,10 +110,8 @@ public:
     if (!mCache.IsActive())
       return false;
 
-    const int ready = mCache.GetReadyThrough();
     const int playBlock = mCache.BlockStart(mPlayheadSample);
-    const int playBlockEnd = mCache.BlockEnd(playBlock);
-    return ready < playBlockEnd;
+    return !mCache.IsBlockReady(playBlock);
   }
 
   bool IsWorkerBusy() const { return mWorker.IsBusy(); }

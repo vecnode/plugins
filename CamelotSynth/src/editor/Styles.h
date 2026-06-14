@@ -64,7 +64,6 @@ inline IColor CamelotBlockSelectedColor()
 {
   return IColor(150, 205, 255);
 }
-
 inline IColor PlayheadColor()
 {
   return IColor(255, 255, 255);

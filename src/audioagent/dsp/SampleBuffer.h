@@ -1,7 +1,7 @@
 #pragma once
 
 #include "audioagent/iplug_bridge.h"
-#include "IPlugPaths.h"
+#include "platform/ResourceLoader.h"
 #include <cmath>
 #include <cstring>
 #include <cstdint>
@@ -23,22 +23,11 @@ public:
     mLoaded = false;
 
 #ifdef OS_WIN
-    extern HINSTANCE gHINSTANCE;
-    void* hInstance = gHINSTANCE;
-    if (!hInstance)
+    const platform::EmbeddedResource resource = platform::LoadEmbeddedResource(resourceFileName, "wav");
+    if (!resource.ok || resource.sizeBytes < 44)
       return false;
 
-    WDL_String resID;
-    const iplug::EResourceLocation found = iplug::LocateResource(resourceFileName, "wav", resID, nullptr, hInstance, nullptr);
-    if (found != iplug::kWinBinary)
-      return false;
-
-    int size = 0;
-    const void* data = iplug::LoadWinResource(resID.Get(), "wav", size, hInstance);
-    if (!data || size < 44)
-      return false;
-
-    return DecodeAndResample(static_cast<const uint8_t*>(data), size, hostSampleRate);
+    return DecodeAndResample(static_cast<const uint8_t*>(resource.data), resource.sizeBytes, hostSampleRate);
 #else
     (void) resourceFileName;
     (void) hostSampleRate;

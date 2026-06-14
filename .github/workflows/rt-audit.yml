@@ -1,0 +1,29 @@
+name: RT Audio Audit
+
+on:
+  push:
+    paths:
+      - 'src/audioagent/**'
+      - 'CamelotSynth/**'
+      - 'scripts/check-rt-audio.ps1'
+  pull_request:
+    paths:
+      - 'src/audioagent/**'
+      - 'CamelotSynth/**'
+      - 'scripts/check-rt-audio.ps1'
+
+jobs:
+  rt-audit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: RT forbidden API grep
+        shell: pwsh
+        run: ./scripts/check-rt-audio.ps1
+
+  # Enable when a TSan/instrumented build target exists (Phase 4).
+  tsan-placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "TSan job placeholder — wire to instrumented CMake target when available."

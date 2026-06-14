@@ -63,7 +63,8 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
     CamelotBlockActiveColor(),
     CamelotBlockSelectedColor(),
     NoteCircleLineColor(),
-    2.5f));
+    2.5f),
+    kCtrlTagCamelotCircle);
   pGraphics->AttachControl(new ::igraphics::GainKnobControl(layout.gain, kParamGain, "Gain", controlStyle));
 
   pGraphics->AttachControl(new ::igraphics::SamplerSectionControl(
@@ -91,6 +92,17 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
     kCtrlTagDetectNote);
 
   pGraphics->AttachControl(new IVButtonControl(
+    layout.samplerFooter.pitchDownOne,
+    [&plugin](IControl* pCaller) {
+      plugin.SendParameterValueFromUI(kParamTrigPitchDownOne, 1.);
+      SplashClickActionFunc(pCaller);
+    },
+    "-1",
+    compactButtonStyle,
+    true),
+    kCtrlTagPitchDownOne);
+
+  pGraphics->AttachControl(new IVButtonControl(
     layout.samplerFooter.pitchUpOne,
     [&plugin](IControl* pCaller) {
       plugin.SendParameterValueFromUI(kParamTrigPitchUpOne, 1.);
@@ -100,6 +112,23 @@ inline void Attach(IGraphics* pGraphics, CamelotSynth& plugin)
     compactButtonStyle,
     true),
     kCtrlTagPitchUpOne);
+
+  pGraphics->AttachControl(new IVButtonControl(
+    layout.samplerFooter.pitchReset,
+    [&plugin](IControl* pCaller) {
+      plugin.SendParameterValueFromUI(kParamTrigPitchReset, 1.);
+      SplashClickActionFunc(pCaller);
+    },
+    "Reset",
+    compactButtonStyle,
+    true),
+    kCtrlTagPitchReset);
+
+  pGraphics->AttachControl(new IVSwitchControl(
+    layout.samplerFooter.pitchMode,
+    kParamPitchMode,
+    "Live",
+    compactButtonStyle));
 
   pGraphics->AttachControl(new ::igraphics::DetectedNoteLabelControl(
     layout.samplerFooter.detectedNote,

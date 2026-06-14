@@ -1,8 +1,15 @@
 #pragma once
 
-#include "OutputLimiter.h"
+#include "DenormalFlush.h"
+#include "GainStage.h"
+#include "HPFStage.h"
+#include "LimiterStage.h"
+#include "PitchMode.h"
 #include "PitchStreamPipeline.h"
+#include "ProcessChain.h"
+#include "RTPitchShifter.h"
 #include "SampleBuffer.h"
+#include "SimdUtils.h"
 #include "audioagent/iplug_bridge.h"
 #include <algorithm>
 #include <atomic>
@@ -22,6 +29,8 @@ namespace audioagent
 class SamplePlayer
 {
 public:
+  static constexpr int kMaxProcessFrames = 8192;
+
   enum class ScheduledCommand : uint8_t
   {
     None = 0,
@@ -37,7 +46,38 @@ public:
     mSeekCrossfadeSamples = (std::max)(mSeekCrossfadeSamples, 128);
     mTransportFadeSamples = static_cast<int>(std::ceil(mSampleRate * kTransportFadeMs * 0.001));
     mTransportFadeSamples = (std::max)(mTransportFadeSamples, 32);
-    mLimiter.SetSampleRate(mSampleRate);
+    mScratchL.Resize(kMaxProcessFrames);
+    mScratchR.Resize(kMaxProcessFrames);
+    mRtpPitch.Reset(mSampleRate);
+    PrepareProcessChain();
+  }
+
+  bool IsHPFEnabled() const { return mHpfStage.IsEnabled(); }
+
+  void SetPitchMode(PitchMode mode) { mPitchMode = mode; }
+
+  PitchMode GetPitchMode() const { return mPitchMode; }
+
+  void SetLivePitchSemitones(int semitones)
+  {
+    semitones = (std::max)(-1, (std::min)(1, semitones));
+    if (semitones == mLivePitchSemitones)
+      return;
+
+    mRtpPitch.Reset(mSampleRate);
+    mLivePitchSemitones = semitones;
+    mRtpPitch.SetSemitones(semitones);
+  }
+
+  HPFStage& GetHPFStage() { return mHpfStage; }
+
+  void PrepareProcessChain()
+  {
+    mProcessChain.Clear();
+    mProcessChain.AddStage(&mHpfStage);
+    mProcessChain.AddStage(&mGainStage);
+    mProcessChain.AddStage(&mLimiterStage);
+    mProcessChain.Reset(mSampleRate);
   }
 
   void SetBuffer(const SampleBuffer& buffer)
@@ -61,9 +101,10 @@ public:
     mSwapOutLength = 0;
     mLastOutL = 0.f;
     mLastOutR = 0.f;
-    mLimiter.Reset();
+    mLimiterStage.ResetState();
     ClearSchedule();
     ClearScheduledSeek();
+    PrepareProcessChain();
   }
 
   /**
@@ -102,7 +143,7 @@ public:
     mIncomingReadFrac = newPos;
     mSeekCrossfadeRemaining = mSeekCrossfadeSamples;
     mBufferSwapCrossfade = true;
-    mLimiter.Reset();
+    mLimiterStage.ResetState();
   }
 
   void SetPitchStream(PitchStreamPipeline* stream) { mPitchStream = stream; }
@@ -134,7 +175,7 @@ public:
     mAfterTransportFade = AfterTransportFade::None;
     mLastOutL = 0.f;
     mLastOutR = 0.f;
-    mLimiter.Reset();
+    mLimiterStage.ResetState();
     mPlayhead.store(static_cast<int>(mReadHeadFrac));
     BeginTransportFadeIn();
   }
@@ -165,46 +206,94 @@ public:
 
   void ProcessBlock(sample** outputs, int nOutputs, int nFrames, sample targetGain, LogParamSmooth<sample, 1>& gainSmoother)
   {
-    for (int s = 0; s < nFrames; s++)
+    if (nFrames <= 0)
+      return;
+
+    const int frames = (std::min)(nFrames, kMaxProcessFrames);
+    sample* scratchL = mScratchL.Get();
+    sample* scratchR = mScratchR.Get();
+
+    mGainStage.SetSmoother(&gainSmoother);
+    mGainStage.SetTargetGain(targetGain);
+
+    int audibleCount = 0;
+
+    for (int s = 0; s < frames; s++)
     {
       ApplyScheduledCommandAt(s);
       ApplyScheduledSeekAt(s);
       AdvanceTransportFade();
 
-      if (!IsAudible() || !mLeft || mLength <= 0)
-        continue;
-
       sample outL = 0.f;
       sample outR = 0.f;
 
-      if (mSeekCrossfadeRemaining > 0)
-        RenderSeekCrossfadeSample(outL, outR);
-      else
-        RenderPlaybackSample(outL, outR);
-
-      if (mSeekCrossfadeRemaining <= 0 && mReadHeadFrac >= static_cast<double>(mLength - 1))
+      if (IsAudible() && mLeft && mLength > 0)
       {
-        mPlaying.store(false);
-        mPaused.store(false);
-        mOutputGain = 0.f;
-        mTransportFadeDirection = TransportFadeDirection::None;
-        mLastOutL = 0.f;
-        mLastOutR = 0.f;
-        break;
-      }
+        if (mSeekCrossfadeRemaining > 0)
+          RenderSeekCrossfadeSample(outL, outR);
+        else
+          RenderPlaybackSample(outL, outR);
 
-      const sample gain = gainSmoother.Process(targetGain) * static_cast<sample>(mOutputGain);
-      outL *= gain;
-      outR *= gain;
-      mLimiter.ProcessStereo(outL, outR);
+        const sample transportGain = static_cast<sample>(mOutputGain);
+        outL *= transportGain;
+        outR *= transportGain;
+
+        FlushDenormalsStereo(outL, outR);
+        scratchL[s] = outL;
+        scratchR[s] = outR;
+        ++audibleCount;
+
+        if (mSeekCrossfadeRemaining <= 0 && mReadHeadFrac >= static_cast<double>(mLength - 1))
+        {
+          mPlaying.store(false);
+          mPaused.store(false);
+          mOutputGain = 0.f;
+          mTransportFadeDirection = TransportFadeDirection::None;
+          mLastOutL = 0.f;
+          mLastOutR = 0.f;
+          for (int fill = s + 1; fill < frames; ++fill)
+          {
+            scratchL[fill] = 0.f;
+            scratchR[fill] = 0.f;
+          }
+          break;
+        }
+      }
+      else
+      {
+        scratchL[s] = 0.f;
+        scratchR[s] = 0.f;
+      }
+    }
+
+    if (audibleCount > 0)
+    {
+      SimdUtils::FlushDenormalsBlock(scratchL, scratchR, frames);
+
+      ProcessContext ctx;
+      ctx.left = scratchL;
+      ctx.right = scratchR;
+      ctx.numChannels = (std::max)(nOutputs, 2);
+      ctx.numFrames = frames;
+      ctx.sampleRate = mSampleRate;
+      mProcessChain.ProcessBlock(ctx);
+    }
+
+    for (int s = 0; s < frames; s++)
+    {
+      const sample outL = scratchL[s];
+      const sample outR = scratchR[s];
 
       if (nOutputs > 0)
         outputs[0][s] = outL;
       if (nOutputs > 1)
         outputs[1][s] = outR;
 
-      mLastOutL = outL;
-      mLastOutR = outR;
+      if (outL != 0.f || outR != 0.f)
+      {
+        mLastOutL = outL;
+        mLastOutR = outR;
+      }
     }
 
     if (mPlaying.load() && mSeekCrossfadeRemaining <= 0 && mTransportFadeDirection == TransportFadeDirection::None)
@@ -235,6 +324,7 @@ private:
   static constexpr double kTransportFadeMs = 12.;
   static constexpr double kHalfPi = 1.5707963267948966;
   static constexpr double kSeekEpsilon = 0.5;
+  static constexpr float kPitchMixSmooth = 0.006f;
 
   enum class TransportFadeDirection : uint8_t
   {
@@ -358,7 +448,7 @@ private:
     mReadHeadFrac = pos;
     mLastOutL = 0.f;
     mLastOutR = 0.f;
-    mLimiter.Reset();
+    mLimiterStage.ResetState();
   }
 
   void QueueAudibleSeek(double targetPos)
@@ -375,7 +465,7 @@ private:
     mOutgoingReadFrac = CurrentAudiblePosition();
     mIncomingReadFrac = targetPos;
     mSeekCrossfadeRemaining = mSeekCrossfadeSamples;
-    mLimiter.Reset();
+    mLimiterStage.ResetState();
   }
 
   void ApplyScheduledSeekAt(int sampleIndex)
@@ -425,6 +515,17 @@ private:
         mPitchStream->ReadStereo(mIncomingReadFrac, mLeft, mRight, mLength, newL, newR);
       }
     }
+    else if (mLivePitchSemitones != 0)
+    {
+      oldL = mBufferSwapCrossfade
+        ? ReadChannelFrom(mSwapOutLeft, mSwapOutLength, mOutgoingReadFrac)
+        : ReadChannel(mLeft, mOutgoingReadFrac);
+      oldR = mBufferSwapCrossfade
+        ? ReadChannelFrom(mSwapOutRight ? mSwapOutRight : mSwapOutLeft, mSwapOutLength, mOutgoingReadFrac)
+        : ReadChannel(mRight ? mRight : mLeft, mOutgoingReadFrac);
+      newL = ReadChannel(mLeft, mIncomingReadFrac);
+      newR = ReadChannel(mRight ? mRight : mLeft, mIncomingReadFrac);
+    }
     else
     {
       oldL = mBufferSwapCrossfade
@@ -453,12 +554,25 @@ private:
 
   void RenderPlaybackSample(sample& outL, sample& outR)
   {
-    if (mPitchStream && mPitchStream->IsActive())
-      mPitchStream->ReadStereo(mReadHeadFrac, mLeft, mRight, mLength, outL, outR);
+    const sample dryL = ReadChannel(mLeft, mReadHeadFrac);
+    const sample dryR = ReadChannel(mRight ? mRight : mLeft, mReadHeadFrac);
+
+    if (mLivePitchSemitones == 0)
+    {
+      mPitchMix += (0.f - mPitchMix) * kPitchMixSmooth;
+      outL = dryL;
+      outR = dryR;
+    }
     else
     {
-      outL = ReadChannel(mLeft, mReadHeadFrac);
-      outR = ReadChannel(mRight ? mRight : mLeft, mReadHeadFrac);
+      sample pitchedL = dryL;
+      sample pitchedR = dryR;
+      mRtpPitch.ProcessSample(dryL, dryR, pitchedL, pitchedR);
+
+      mPitchMix += (1.f - mPitchMix) * kPitchMixSmooth;
+      const sample mix = static_cast<sample>(mPitchMix);
+      outL = dryL * (1.f - mix) + pitchedL * mix;
+      outR = dryR * (1.f - mix) + pitchedR * mix;
     }
 
     mReadHeadFrac += 1.;
@@ -549,7 +663,7 @@ private:
     mTransportFadeDirection = TransportFadeDirection::None;
     mTransportFadeRemaining = 0;
     EndSeekCrossfade();
-    mLimiter.Reset();
+    mLimiterStage.ResetState();
     ClearSchedule();
   }
 
@@ -608,7 +722,18 @@ private:
 
   PitchStreamPipeline* mPitchStream = nullptr;
 
-  OutputLimiter mLimiter;
+  PitchMode mPitchMode = PitchMode::Quality;
+  int mLivePitchSemitones = 0;
+  float mPitchMix = 0.f;
+  RTPitchShifter mRtpPitch;
+
+  ProcessChain mProcessChain;
+  HPFStage mHpfStage;
+  GainStage mGainStage;
+  LimiterStage mLimiterStage;
+
+  WDL_TypedBuf<sample> mScratchL;
+  WDL_TypedBuf<sample> mScratchR;
 };
 
 } // namespace audioagent

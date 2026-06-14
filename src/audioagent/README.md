@@ -1,16 +1,30 @@
 # audioagent
 
-Pure C++ library for embedded-sample playback, real-time pitch, offline MIR (note detection), waveform modelling, and Camelot wheel geometry. Host plugins link it and wire their own UI — [CamelotSynth](../../CamelotSynth/) is the reference iPlug2 integration.
+Pure C++ library for embedded-sample playback, streaming pitch (read-ahead), offline MIR (note detection), waveform modelling, and Camelot wheel geometry. Host plugins link it and wire their own UI — [CamelotSynth](../../CamelotSynth/) is the reference iPlug2 integration.
 
 ## What lives here
 
 | Module | Role |
 |--------|------|
-| `dsp/` | Real-time playback — `SampleBuffer`, `SamplePlayer`, `SampleTransport`, `PitchStreamPipeline`, `OutputLimiter` |
-| `analysis/` | Background worker + audioFlux (detect on worker; pitch chunks on `PitchStreamWorker`) |
+| `dsp/` | Real-time playback — `ProcessChain`, `GainStage`, `HPFStage`, `LimiterStage`, `RTPitchShifter`, transport, pitch pipeline |
+| `analysis/` | Background workers + audioFlux (detect on worker; pitch blocks on `PitchStreamWorker`) |
 | `model/` | `WaveformEnvelope` (display data derived from buffers) |
 | `camelot/` | `WheelLayout` — B1–B36 spoke/zone geometry and hit-testing |
 | `SamplerEngine.h` | Facade orchestrating transport, streaming pitch, detect worker, waveform |
+
+## Real-time processing chain (today)
+
+All of this runs on the host audio thread inside `SamplerEngine::ProcessBlock` → `SampleTransport::ProcessBlock` → `SamplePlayer::ProcessBlock`:
+
+| Step | Component | Notes |
+|------|-----------|-------|
+| 1 | Source read | Dry sample; ±1 via `RTPitchShifter` with wet/dry crossfade (no block waits) |
+| 2 | Crossfade mix | 20 ms seek crossfade; 12 ms equal-power transport fade |
+| 3 | HPF | Optional 30 Hz (`HPFStage`) |
+| 4 | Gain | Host passes `LogParamSmooth` |
+| 5 | Limiter | `LimiterStage` — soft knee + stereo peak limiter |
+
+**Pitch +1 / −1** latch at exactly ±1 from the detected reference (no stacking). Use **Reset** to return to the detected note. `RTPitchShifter` runs on the audio thread with smoothed mix — always outputs audio.
 
 ## Thread model
 
@@ -19,9 +33,20 @@ Pure C++ library for embedded-sample playback, real-time pitch, offline MIR (not
 | `ProcessBlock` | Mix, gain, read pitched cache / dry fallback | audioFlux, heap churn, locks |
 | Param scheduling | O(1) transport + `BeginPitchStream` | Full-buffer copies, MIR |
 | `SamplerEngine::Tick()` | Kick pitch scheduler, detect worker queue | Blocking on worker |
-| `PitchStreamWorker` | audioFlux pitchShift per **10 s block** | Any UI, ProcessBlock |
+| `PitchStreamWorker` | audioFlux pitchShift per **~10 s block** | Any UI, ProcessBlock |
+| `OfflineSampleWorker` | PitchYIN detect | ProcessBlock |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for transport/seek de-clicking and module dependency rules.
+
+## Making this production-grade RT DSP
+
+Current strengths: clear thread split, de-clicked transport, limiter on output. Gaps to close for a professional library:
+
+1. **Composable chain** — stages are wired inside `SamplePlayer` today; target is `ProcessChain` + `IProcessStage` (see [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md)).
+2. **Scheduler placement** — pitch worker should be kicked from `Tick()`, not every `ProcessBlock`.
+3. **Cache safety** — block commits from the worker must not race with audio reads (block-ready protocol or double buffering).
+4. **Two pitch modes** — keep quality read-ahead for DJ-style +1 steps; add optional low-latency `RTPitchShifter` for live performance.
+5. **RT audit** — CI checks for forbidden APIs on the audio path; optional render regression tests.
 
 ## iPlug2 integration
 
@@ -40,7 +65,9 @@ mEngine.ProcessBlock(outputs, nChans, nFrames, targetGain, mGainSmoother);
 // OnParamChange
 mEngine.SchedulePlay(sampleOffset);
 mEngine.RequestDetectNote();
-mEngine.RequestPitchUpOne();  // 10 s block pipeline; pitched when block ready
+mEngine.RequestPitchUpOne();   // latch +1 until Reset or -1
+mEngine.RequestPitchDownOne(); // latch -1 until Reset or +1
+mEngine.RequestPitchReset();   // back to detected note
 
 // OnIdle (UI timer)
 mEngine.Tick();
@@ -74,3 +101,7 @@ target_link_libraries(MyPlugin-vst3 PRIVATE audioagent)
 ```powershell
 .\scripts\build.ps1 -Plugin CamelotSynth -Format vst3 -Config Release -Install
 ```
+
+## Roadmap
+
+Phased plan: [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md) — ProcessChain, RT pitch mode, Camelot wheel note highlight, library hardening.

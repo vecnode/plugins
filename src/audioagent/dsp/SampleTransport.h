@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PitchStreamPipeline.h"
+#include "PitchMode.h"
 #include "SampleBuffer.h"
 #include "SamplePlayer.h"
 #include "audioagent/iplug_bridge.h"
@@ -81,7 +82,6 @@ public:
   {
     mPlayer.ProcessBlock(outputs, nOutputs, nFrames, targetGain, gainSmoother);
     SyncPitchPlayhead();
-    mPitchStream.KickScheduler();
   }
 
   void SyncPitchPlayhead()
@@ -95,6 +95,18 @@ public:
   }
 
   void KickPitchScheduler() { mPitchStream.KickScheduler(); }
+
+  void SetPitchMode(PitchMode mode) { mPlayer.SetPitchMode(mode); }
+
+  PitchMode GetPitchMode() const { return mPlayer.GetPitchMode(); }
+
+  void SetLivePitchSemitones(int semitones) { mPlayer.SetLivePitchSemitones(semitones); }
+
+  void SetHPFEnabled(bool enabled) { mPlayer.GetHPFStage().SetEnabled(enabled); }
+
+  bool IsHPFEnabled() const { return mPlayer.IsHPFEnabled(); }
+
+  SamplePlayer& GetPlayer() { return mPlayer; }
 
   bool IsPlaying() const { return mPlayer.IsPlaying(); }
 

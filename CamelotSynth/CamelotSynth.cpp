@@ -8,18 +8,25 @@ namespace
 {
 constexpr double kGainSmoothMs = 20.;
 constexpr int kHiddenTransportFlags = IParam::kFlagMeta | IParam::kFlagCannotAutomate;
+constexpr int kStateMagic = 0x434D5354; // 'CMST'
+constexpr int kStateVersion = 1;
 }
 
 CamelotSynth::CamelotSynth(const InstanceInfo& info)
 : iplug::Plugin(info, MakeConfig(kNumParams, kNumPresets))
 {
+  // RT chain order (audioagent ProcessChain): source → transport mix → HPF → gain → limiter
   GetParam(kParamGain)->InitDouble("Gain", 100., 0., 100.0, 0.01, "%");
+  GetParam(kParamHPF)->InitBool("HPF", false);
+  GetParam(kParamPitchMode)->InitEnum("Pitch Mode", 1, {"Quality", "Live"});
   GetParam(kParamTrigPlay)->InitBool("Play", false, "", kHiddenTransportFlags);
   GetParam(kParamTrigPause)->InitBool("Pause", false, "", kHiddenTransportFlags);
   GetParam(kParamTrigStop)->InitBool("Stop", false, "", kHiddenTransportFlags);
   GetParam(kParamSeek)->InitDouble("Seek", 0., 0., 1., 0.001, "", kHiddenTransportFlags);
   GetParam(kParamTrigDetectNote)->InitBool("Detect Note", false, "", kHiddenTransportFlags);
+  GetParam(kParamTrigPitchDownOne)->InitBool("Pitch -1", false, "", kHiddenTransportFlags);
   GetParam(kParamTrigPitchUpOne)->InitBool("Pitch +1", false, "", kHiddenTransportFlags);
+  GetParam(kParamTrigPitchReset)->InitBool("Pitch Reset", false, "", kHiddenTransportFlags);
 
 #if IPLUG_EDITOR
   mMakeGraphicsFunc = [&]() {
@@ -106,9 +113,38 @@ void CamelotSynth::SyncOfflineWorkerState()
   {
     mEngine.Tick();
     ApplyOfflineWorkerUiUpdates(pGraphics);
+    SyncPitchControls(pGraphics);
   }
 #else
   mEngine.Tick();
+#endif
+}
+
+void CamelotSynth::SyncPitchControls(IGraphics* pGraphics)
+{
+#if IPLUG_EDITOR
+  const bool hasReference = mEngine.HasReferenceNote();
+  const int semitones = mEngine.GetPitchSemitones();
+
+  if (auto* pPitchUp = pGraphics->GetControlWithTag(kCtrlTagPitchUpOne))
+  {
+    pPitchUp->SetDisabled(!hasReference);
+    ::igraphics::RequestControlRepaint(pPitchUp);
+  }
+
+  if (auto* pPitchDown = pGraphics->GetControlWithTag(kCtrlTagPitchDownOne))
+  {
+    pPitchDown->SetDisabled(!hasReference);
+    ::igraphics::RequestControlRepaint(pPitchDown);
+  }
+
+  if (auto* pPitchReset = pGraphics->GetControlWithTag(kCtrlTagPitchReset))
+  {
+    pPitchReset->SetDisabled(!hasReference || semitones == 0);
+    ::igraphics::RequestControlRepaint(pPitchReset);
+  }
+#else
+  (void) pGraphics;
 #endif
 }
 
@@ -116,16 +152,7 @@ void CamelotSynth::ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics)
 {
 #if IPLUG_EDITOR
   const bool workerBusy = mEngine.IsWorkerBusy();
-  const bool pitchCatchingUp = mEngine.IsPitchCatchingUp();
-  const bool hasReference = mEngine.HasReferenceNote();
   const auto& ui = mEngine.GetWorkerUiState();
-
-  if (auto* pPitchButton = pGraphics->GetControlWithTag(kCtrlTagPitchUpOne))
-  {
-    pPitchButton->SetDisabled(pitchCatchingUp || !hasReference
-                              || mEngine.GetPitchSemitones() >= audioagent::SamplerEngine::kMaxPitchSemitones);
-    ::igraphics::RequestControlRepaint(pPitchButton);
-  }
 
   if (auto* pDetectButton = pGraphics->GetControlWithTag(kCtrlTagDetectNote))
   {
@@ -165,14 +192,6 @@ void CamelotSynth::ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics)
       ::igraphics::RequestControlRepaint(pNote);
     }
   }
-  else if (pitchCatchingUp && mEngine.IsPitchStreamActive())
-  {
-    if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
-    {
-      pNote->As<::igraphics::DetectedNoteLabelControl>()->SetProcessing();
-      ::igraphics::RequestControlRepaint(pNote);
-    }
-  }
 
   mEngine.ClearWorkerUiState();
 #else
@@ -187,7 +206,46 @@ void CamelotSynth::OnReset()
   mGainSmoother.SetValue(static_cast<sample>(GetParam(kParamGain)->Value() / 100.));
   mEngine.SetSampleRate(GetSampleRate());
   mEngine.Reset();
+  mEngine.SetHPFEnabled(GetParam(kParamHPF)->Bool());
+  mEngine.SetPitchMode(GetParam(kParamPitchMode)->Int() == 1 ? audioagent::PitchMode::Live
+                                                               : audioagent::PitchMode::Quality);
   LoadEmbeddedSample();
+}
+
+bool CamelotSynth::SerializeState(IByteChunk& chunk) const
+{
+  chunk.Put(&kStateMagic);
+  chunk.Put(&kStateVersion);
+  const int hpf = GetParam(kParamHPF)->Int();
+  const int pitchMode = GetParam(kParamPitchMode)->Int();
+  chunk.Put(&hpf);
+  chunk.Put(&pitchMode);
+  return true;
+}
+
+int CamelotSynth::UnserializeState(const IByteChunk& chunk, int startPos)
+{
+  int magic = 0;
+  int version = 0;
+  startPos = chunk.Get(&magic, startPos);
+  if (magic != kStateMagic)
+    return startPos;
+
+  startPos = chunk.Get(&version, startPos);
+  if (version < 1)
+    return startPos;
+
+  int hpf = 0;
+  int pitchMode = 0;
+  startPos = chunk.Get(&hpf, startPos);
+  startPos = chunk.Get(&pitchMode, startPos);
+
+  GetParam(kParamHPF)->Set(hpf);
+  GetParam(kParamPitchMode)->Set(pitchMode);
+  mEngine.SetHPFEnabled(hpf != 0);
+  mEngine.SetPitchMode(pitchMode == 1 ? audioagent::PitchMode::Live : audioagent::PitchMode::Quality);
+
+  return startPos;
 }
 
 void CamelotSynth::LoadEmbeddedSample()
@@ -207,6 +265,18 @@ void CamelotSynth::OnParamChange(int paramIdx, EParamSource source, int sampleOf
 
   switch (paramIdx)
   {
+    case kParamGain:
+      break;
+
+    case kParamHPF:
+      mEngine.SetHPFEnabled(GetParam(kParamHPF)->Bool());
+      break;
+
+    case kParamPitchMode:
+      mEngine.SetPitchMode(GetParam(kParamPitchMode)->Int() == 1 ? audioagent::PitchMode::Live
+                                                                   : audioagent::PitchMode::Quality);
+      break;
+
     case kParamTrigPlay:
       if (GetParam(kParamTrigPlay)->Bool())
       {
@@ -240,10 +310,22 @@ void CamelotSynth::OnParamChange(int paramIdx, EParamSource source, int sampleOf
       ResetTransportTrigger(kParamTrigDetectNote);
       break;
 
+    case kParamTrigPitchDownOne:
+      if (GetParam(kParamTrigPitchDownOne)->Bool() && mEngine.HasReferenceNote())
+        mEngine.RequestPitchDownOne();
+      ResetTransportTrigger(kParamTrigPitchDownOne);
+      break;
+
     case kParamTrigPitchUpOne:
       if (GetParam(kParamTrigPitchUpOne)->Bool() && mEngine.HasReferenceNote())
         mEngine.RequestPitchUpOne();
       ResetTransportTrigger(kParamTrigPitchUpOne);
+      break;
+
+    case kParamTrigPitchReset:
+      if (GetParam(kParamTrigPitchReset)->Bool())
+        mEngine.RequestPitchReset();
+      ResetTransportTrigger(kParamTrigPitchReset);
       break;
 
     default:

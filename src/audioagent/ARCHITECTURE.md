@@ -173,9 +173,37 @@ Transport play/pause/stop uses 12 ms equal-power fade (`kTransportFadeMs`).
 
 ---
 
+## Real-time processing chain
+
+Today all RT stages are embedded in `SamplePlayer::ProcessBlock` (per-sample loop):
+
+```
+source (dry | PitchStreamPipeline)
+  → seek / transport crossfade
+  → gain (host LogParamSmooth)
+  → OutputLimiter
+  → outputs
+```
+
+There is no separate `ProcessChain` type yet. New effects should eventually implement `IProcessStage` (see [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md)).
+
+### RT contract checklist
+
+| Rule | Current |
+|------|---------|
+| No audioFlux in `ProcessBlock` | Yes |
+| No mutex on audio thread | Yes (but `KickScheduler` notifies worker every block — move to `Tick()`) |
+| No heap alloc in hot path | Mostly yes; audit `PitchStreamPipeline` bind at load only |
+| Pitch cache: worker write vs audio read | **Needs block-ready protocol** — worker may commit while audio reads same indices |
+| Documented chain order | Yes (this section + CamelotSynth README) |
+
+---
+
 ## Extension notes
 
 - New semitone steps: adjust `SamplerEngine::RequestPitchUpOne` / add `RequestPitchDownOne`
+- Composable chain: `ProcessChain` + stages — see [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md)
+- Live RT pitch: add `RTPitchShifter` alongside read-ahead pipeline
 - Offline bake (optional): re-enable worker pitchShift when stopped for export-quality freeze
 - Non-iPlug hosts: replace `LoadEmbedded` with `AssignFromFloat` on a decoded buffer
 - Highlight detected note on wheel: map `DetectedNote.midiNote` → `WheelLayout::HitTestBlockIndex` in the plugin UI

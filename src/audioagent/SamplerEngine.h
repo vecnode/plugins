@@ -3,6 +3,7 @@
 #include "analysis/OfflineSampleWorker.h"
 #include "analysis/SampleNoteDetector.h"
 #include "analysis/SampleProcessSnapshot.h"
+#include "dsp/PitchMode.h"
 #include "dsp/SampleTransport.h"
 #include "model/WaveformEnvelope.h"
 #include "audioagent/iplug_bridge.h"
@@ -26,15 +27,21 @@ struct WorkerUiState
 /**
  * Sampler engine — transport, audioFlux detect on worker, streaming pitch read-ahead.
  *
- * +1 pitch: audioFlux chunk pipeline fills cache ahead of playhead; playback never stops.
+ * Pitch modes:
+ *  - Quality: audioFlux block read-ahead (background worker)
+ *  - Live: RTPitchShifter on the audio thread (low latency)
  */
 class SamplerEngine
 {
 public:
   static constexpr int kWaveformPoints = 1024;
-  static constexpr int kMaxPitchSemitones = 12;
+  static constexpr int kPitchUpSemitones = 1;
+  static constexpr int kPitchDownSemitones = -1;
 
-  void SetSampleRate(double sampleRate) { mTransport.SetSampleRate(sampleRate); }
+  void SetSampleRate(double sampleRate)
+  {
+    mTransport.SetSampleRate(sampleRate);
+  }
 
   void Reset()
   {
@@ -44,6 +51,7 @@ public:
     mPendingDetectRequest.store(false, std::memory_order_release);
     mForcePlayhead = false;
     mTransport.ResetPitchStream();
+    mTransport.SetLivePitchSemitones(0);
   }
 
   bool LoadEmbedded(const char* resourceFileName, double hostSampleRate)
@@ -60,6 +68,32 @@ public:
   {
     mTransport.ProcessBlock(outputs, nChans, nFrames, targetGain, gainSmoother);
   }
+
+  void SetPitchMode(PitchMode mode)
+  {
+    if (mPitchMode == mode)
+      return;
+
+    mPitchMode = mode;
+    mTransport.SetPitchMode(mode);
+
+    if (mode == PitchMode::Live)
+    {
+      mTransport.EndPitchStream();
+      mTransport.SetLivePitchSemitones(mPitchSemitones);
+    }
+    else if (mPitchSemitones != 0)
+    {
+      mTransport.SetLivePitchSemitones(0);
+      mTransport.BeginPitchStream(mTransport.GetPlayheadSample(), mPitchSemitones);
+    }
+  }
+
+  PitchMode GetPitchMode() const { return mPitchMode; }
+
+  void SetHPFEnabled(bool enabled) { mTransport.SetHPFEnabled(enabled); }
+
+  bool IsHPFEnabled() const { return mTransport.IsHPFEnabled(); }
 
   void SchedulePlay(int sampleOffset)
   {
@@ -87,32 +121,42 @@ public:
 
   void RequestDetectNote() { mPendingDetectRequest.store(true, std::memory_order_release); }
 
-  /** Start / extend streaming audioFlux +1 from the current playhead. */
   void RequestPitchUpOne()
   {
     if (!mBaseReferenceNote.valid)
       return;
 
-    if (mPitchSemitones >= kMaxPitchSemitones)
+    ApplyPitchSemitones(kPitchUpSemitones);
+  }
+
+  void RequestPitchDownOne()
+  {
+    if (!mBaseReferenceNote.valid)
       return;
 
-    const int nextSemitones = mPitchSemitones + 1;
-    const int origin = mTransport.GetPlayheadSample();
+    ApplyPitchSemitones(kPitchDownSemitones);
+  }
 
-    mTransport.BeginPitchStream(origin, nextSemitones);
-    mPitchSemitones = nextSemitones;
-    mReferenceNote = SampleNoteDetector::Transpose(mBaseReferenceNote, mPitchSemitones);
+  void RequestPitchReset()
+  {
+    if (!mBaseReferenceNote.valid && mPitchSemitones == 0)
+      return;
 
-    mUiWorkerState.pitchLabelChanged = true;
-    mUiWorkerState.pitchLabelNote = mReferenceNote;
+    ApplyPitchSemitones(0);
   }
 
   int GetPitchSemitones() const { return mPitchSemitones; }
 
-  bool IsPitchStreamActive() const { return mTransport.IsPitchStreamActive(); }
+  bool IsPitchStreamActive() const
+  {
+    return mPitchMode == PitchMode::Quality && mTransport.IsPitchStreamActive();
+  }
 
   bool IsPitchCatchingUp() const
   {
+    if (mPitchMode != PitchMode::Quality || mPitchSemitones == 0)
+      return false;
+
     return mTransport.IsPitchStreamCatchingUp() || mTransport.IsPitchWorkerBusy();
   }
 
@@ -152,6 +196,24 @@ public:
   OfflineSampleWorker& GetWorker() { return mWorker; }
 
 private:
+  void ApplyPitchSemitones(int nextSemitones)
+  {
+    nextSemitones = (std::max)(-1, (std::min)(1, nextSemitones));
+    if (nextSemitones == mPitchSemitones)
+      return;
+
+    mTransport.EndPitchStream();
+    mTransport.SetLivePitchSemitones(nextSemitones);
+
+    mPitchSemitones = nextSemitones;
+    mReferenceNote = (nextSemitones == 0)
+      ? mBaseReferenceNote
+      : SampleNoteDetector::Transpose(mBaseReferenceNote, mPitchSemitones);
+
+    mUiWorkerState.pitchLabelChanged = true;
+    mUiWorkerState.pitchLabelNote = mReferenceNote;
+  }
+
   void RebuildProcessSnapshot()
   {
     SampleProcessSnapshot::Capture(mTransport.GetBuffer(), mWorker);
@@ -186,6 +248,7 @@ private:
         mPitchSemitones = 0;
         mReferenceNote = detectNote;
         mTransport.EndPitchStream();
+        mTransport.SetLivePitchSemitones(0);
       }
       else if (mUiWorkerState.detectPhase == OfflineSampleWorker::Phase::Failed)
       {
@@ -193,6 +256,7 @@ private:
         mReferenceNote = {};
         mPitchSemitones = 0;
         mTransport.EndPitchStream();
+        mTransport.SetLivePitchSemitones(0);
       }
     }
   }
@@ -203,6 +267,7 @@ private:
   DetectedNote mBaseReferenceNote;
   DetectedNote mReferenceNote;
   WorkerUiState mUiWorkerState;
+  PitchMode mPitchMode = PitchMode::Quality;
   int mPitchSemitones = 0;
   bool mForcePlayhead = false;
 

@@ -98,7 +98,10 @@ struct SamplerFooterLayout
   IRECT detectNote;
   IRECT detectedNote;
   IRECT length;
+  IRECT pitchDownOne;
   IRECT pitchUpOne;
+  IRECT pitchReset;
+  IRECT pitchMode;
 };
 
 struct Regions
@@ -151,7 +154,10 @@ inline SamplerFooterLayout ComputeSamplerFooter(const IRECT& footerBounds)
   layout.length = detectRow.Remainder();
 
   RowLayout pitchRow(RowContent(layout.rowPitch), C::kRowGap);
+  layout.pitchDownOne = pitchRow.TakeFixed(CompactButtonWidth(), CompactButtonHeight());
   layout.pitchUpOne = pitchRow.TakeFixed(CompactButtonWidth(), CompactButtonHeight());
+  layout.pitchReset = pitchRow.TakeFixed(CompactButtonWidth(), CompactButtonHeight());
+  layout.pitchMode = pitchRow.Remainder().GetFromLeft(120.f);
 
   return layout;
 }

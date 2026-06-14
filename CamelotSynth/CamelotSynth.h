@@ -10,12 +10,18 @@ const int kNumPresets = 1;
 enum EParams
 {
   kParamGain = 0,
+  /** Chain stage 3 — high-pass (30 Hz), off by default. */
+  kParamHPF,
+  /** Pitch mode: 0 = Quality (read-ahead), 1 = Live (RT shifter). */
+  kParamPitchMode,
   kParamTrigPlay,
   kParamTrigPause,
   kParamTrigStop,
   kParamSeek,
   kParamTrigDetectNote,
+  kParamTrigPitchDownOne,
   kParamTrigPitchUpOne,
+  kParamTrigPitchReset,
   kNumParams
 };
 
@@ -28,6 +34,9 @@ enum EControlTags
   kCtrlTagDetectedNote = 4,
   kCtrlTagDetectNote = 5,
   kCtrlTagPitchUpOne = 6,
+  kCtrlTagCamelotCircle = 7,
+  kCtrlTagPitchDownOne = 8,
+  kCtrlTagPitchReset = 9,
   kNumCtrlTags
 };
 
@@ -51,12 +60,15 @@ public:
   void OnReset() override;
   void OnParamChange(int paramIdx, EParamSource source, int sampleOffset) override;
   void OnIdle() override;
+  bool SerializeState(IByteChunk& chunk) const override;
+  int UnserializeState(const IByteChunk& chunk, int startPos) override;
 
 private:
   void LoadEmbeddedSample();
   void ResetTransportTrigger(int paramIdx);
   void SyncOfflineWorkerState();
   void ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics);
+  void SyncPitchControls(IGraphics* pGraphics);
 
   audioagent::SamplerEngine mEngine;
   IPeakAvgSender<2> mMeterSender;

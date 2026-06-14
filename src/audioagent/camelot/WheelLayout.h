@@ -178,6 +178,29 @@ public:
 
     return spoke * kZoneCount + zone;
   }
+
+  /** Map a MIDI note to the best-matching Camelot block (0–35), or -1. */
+  static int BlockIndexFromMidiNote(int midiNote)
+  {
+    if (midiNote < 0)
+      return -1;
+
+    const int pc = ((midiNote % 12) + 12) % 12;
+
+    static constexpr int kMajorRoot[kSpokeCount] = {11, 6, 1, 8, 3, 10, 5, 0, 7, 2, 9, 4};
+
+    for (int spoke = 0; spoke < kSpokeCount; ++spoke)
+    {
+      if (kMajorRoot[spoke] == pc)
+        return spoke * kZoneCount + 2;
+
+      const int minorRoot = (kMajorRoot[spoke] + 9) % 12;
+      if (minorRoot == pc)
+        return spoke * kZoneCount + 0;
+    }
+
+    return -1;
+  }
 };
 
 } // namespace audioagent::camelot
