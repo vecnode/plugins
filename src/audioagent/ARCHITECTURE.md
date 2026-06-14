@@ -14,6 +14,8 @@ src/audioagent/
 ├── CMakeLists.txt            INTERFACE lib; links audioflux
 ├── analysis/
 │   ├── OfflineSampleWorker.h
+│   ├── PitchStreamCache.h
+│   ├── PitchStreamWorker.h
 │   ├── SampleNoteDetector.h
 │   ├── SamplePitchProcessor.h
 │   └── SampleProcessSnapshot.h
@@ -21,6 +23,7 @@ src/audioagent/
 │   ├── SampleBuffer.h
 │   ├── SamplePlayer.h
 │   ├── SampleTransport.h
+│   ├── PitchStreamPipeline.h
 │   └── OutputLimiter.h
 ├── model/
 │   └── WaveformEnvelope.h
@@ -38,26 +41,48 @@ src/audioagent/
 [Embedded WAV]
       │
       ▼
- SampleBuffer ──LoadEmbedded──► SamplePlayer ◄── atomic swap (pitch result)
-      │                                │
-      ▼                                ▼
-WaveformEnvelope              ProcessBlock → outputs
- (1024 peak buckets)                  │
-      │                         (host IPeakAvgSender)
-      │                                │
-      └──── SamplerEngine::Tick() ─────┘
+ SampleBuffer ──LoadEmbedded──► SamplePlayer ──► outputs
+      │              │              │
+      │              │              └── PitchStreamPipeline::ReadStereo
+      │              │                        │
+      ▼              │                        ▼
+WaveformEnvelope     │              PitchStreamWorker (audioFlux chunks)
+      │              │
+      └──── SamplerEngine::Tick() ───► OfflineSampleWorker (detect only)
                          │
-              OfflineSampleWorker (background)
-                         │
-              audioFlux PitchYIN / pitchShift
+              audioFlux PitchYIN
 ```
 
-- **Audio thread:** `SamplerEngine::ProcessBlock` → `SampleTransport::ProcessBlock`. At block start, `ApplyPendingSwapIfReady()` may replace the playback buffer (O(1)).
-- **Audio thread (param scheduling):** `SchedulePlay/Pause/Stop/Seek` with `sampleOffset`; detect/+1 set atomic flags only.
-- **UI timer:** `SamplerEngine::Tick()` — snapshot capture, worker queue, pitch buffer staging, `WorkerUiState` for labels.
-- **Worker thread:** PitchYIN or pitchShift on immutable snapshot; never touches UI.
+- **Audio thread:** `SamplePlayer` reads dry or pitched cache via `PitchStreamPipeline`; dry buffer is never replaced.
+- **Audio thread (param scheduling):** transport + `BeginPitchStream` + atomic detect flag only.
+- **UI timer:** kick pitch scheduler, detect worker queue; +1 updates label immediately via `pitchLabelChanged`.
+- **PitchStreamWorker:** audioFlux `pitchShift` on 4096-sample windows ahead of playhead.
+- **OfflineSampleWorker:** PitchYIN detect only.
 
-Cross-thread pitch handoff: `StageProcessedBuffer` (Tick) → `ApplyPendingSwapIfReady` (ProcessBlock).
+### Real-time pitch (+1) — block read-ahead pipeline
+
+| Property | Value |
+| -------- | ----- |
+| Algorithm | audioFlux `pitchShift` on **~10 s offline blocks** (`PitchStreamWorker`) |
+| Read-ahead | Worker keeps **2 blocks (~20 s)** ahead of the playhead |
+| Playback | Dry until the current block is ready, then continuous pitched audio for the block |
+| Range | +1 per press, cumulative to +12 semitones (always shifted from dry) |
+| Paused | Worker fills blocks while stopped; pitched audio on next play when ready |
+
+```
+SamplePlayer
+      │
+      ├── dry buffer (immutable)
+      └── PitchStreamPipeline::ReadStereo
+                │
+                ├── block ready → pitched L/R (full audioFlux quality)
+                └── block pending → dry at playhead
+                │
+                ▼
+          PitchStreamWorker (background thread, 10 s blocks)
+```
+
+Full-buffer swap (`ReplaceBufferKeepingTransport`) is retained for optional offline bake only — live +1 uses the stream cache.
 
 ---
 
@@ -67,11 +92,12 @@ Cross-thread pitch handoff: `StageProcessedBuffer` (Tick) → `ApplyPendingSwapI
 | Method                                    | Thread                | Purpose                                     |
 | ----------------------------------------- | --------------------- | ------------------------------------------- |
 | `LoadEmbedded`                            | Init / OnReset        | Decode embedded WAV, build waveform         |
-| `ProcessBlock`                            | Audio                 | Mix sample + apply pending swap             |
+| `ProcessBlock`                            | Audio                 | Mix sample via pitch stream or dry          |
 | `Schedule`*                               | Audio (OnParamChange) | Sample-accurate transport                   |
-| `RequestDetectNote` / `RequestPitchUpOne` | Audio                 | O(1) atomic flags                           |
-| `Tick`                                    | UI timer              | Queue jobs, poll worker, stage pitch result |
-| `GetWorkerUiState`                        | UI timer              | Detect/pitch phase for editor labels        |
+| `RequestDetectNote` / `RequestPitchUpOne` | Audio                 | O(1) flags; +1 starts `BeginPitchStream`    |
+| `Tick`                                    | UI timer              | Kick pitch scheduler, queue detect, poll UI |
+| `GetWorkerUiState`                        | UI timer              | Detect phase + instant pitch label updates  |
+| `IsPitchCatchingUp`                       | UI                    | Cache behind playhead or worker busy        |
 
 
 ---
@@ -114,11 +140,13 @@ Transport play/pause/stop uses 12 ms equal-power fade (`kTransportFadeMs`).
 - Range 27–2000 Hz, threshold **0.12**
 - Weighted MIDI histogram → `DetectedNote`
 
-### Pitch +1 (offline pitchShift)
+### Pitch +1 (block read-ahead)
 
-- Phase vocoder + time-stretch + resample
-- Result staged to `SampleTransport`; atomic swap at block boundary
-- Label transposed via `SampleNoteDetector::Transpose`
+- `PitchStreamWorker` runs full audioFlux `pitchShift` on **10-second blocks** ahead of the playhead
+- Worker prefetches **2 blocks (~20 s)** while playback uses the ready block
+- `PitchStreamPipeline::ReadStereo` plays pitched audio only inside ready blocks; dry until the first block completes
+- Label transposed immediately via `SampleNoteDetector::Transpose`
+- Works during playback **or** paused (stream fills while stopped)
 
 ---
 
@@ -147,8 +175,8 @@ Transport play/pause/stop uses 12 ms equal-power fade (`kTransportFadeMs`).
 
 ## Extension notes
 
-- New semitone steps: extend `OfflineSampleWorker::JobType` + `SamplePitchProcessor`
-- Real-time pitch: separate RT path; keep offline worker unchanged
+- New semitone steps: adjust `SamplerEngine::RequestPitchUpOne` / add `RequestPitchDownOne`
+- Offline bake (optional): re-enable worker pitchShift when stopped for export-quality freeze
 - Non-iPlug hosts: replace `LoadEmbedded` with `AssignFromFloat` on a decoded buffer
 - Highlight detected note on wheel: map `DetectedNote.midiNote` → `WheelLayout::HitTestBlockIndex` in the plugin UI
 

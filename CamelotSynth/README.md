@@ -1,6 +1,6 @@
 # CamelotSynth
 
-iPlug2 VST3 shell for the [audioagent](../src/audioagent/) sampler library. Playback, gain, and metering run on the **audio thread**; note detection and pitch shifting run on a **background worker**. The editor stays responsive because no heavy MIR work runs in `ProcessBlock`, `OnParamChange`, or the IGraphics paint path.
+iPlug2 VST3 shell for the [audioagent](../src/audioagent/) sampler library. Playback, gain, RT pitch, and metering run on the **audio thread**; note detection runs on a **background worker**. The editor stays responsive because no heavy MIR work runs in `ProcessBlock`, `OnParamChange`, or the IGraphics paint path.
 
 ## Features
 
@@ -10,7 +10,7 @@ iPlug2 VST3 shell for the [audioagent](../src/audioagent/) sampler library. Play
 | Transport | Sample-accurate play / pause / stop / seek via hidden meta parameters |
 | Waveform | 1024-point peak envelope; playhead overlay synced on `OnIdle` |
 | Note detect | audioFlux **PitchYIN** on a worker thread (via audioagent) |
-| Pitch +1 | audioFlux offline **pitchShift** (+1 semitone); atomic buffer swap at block boundary |
+| Pitch +1 | audioFlux **10 s blocks** with ~20 s read-ahead; continuous pitched playback per ready block |
 | Camelot wheel | audioagent `WheelLayout` geometry; `CamelotCircleControl` draws in IGraphics |
 
 ## Architecture split
@@ -68,6 +68,6 @@ Install: `%LOCALAPPDATA%\Programs\Common\VST3\CamelotSynth.vst3` (close the host
 
 ## Planned extensions
 
+- Real-time pitch while playing (implemented via `RTPitchShifter`)
 - Highlight detected note on the Camelot circle
-- Additional semitone steps (−1, +12) via the same worker + swap pattern
-- Real-time pitch tracking while playing (separate RT path)
+- Additional semitone steps (−1) and pitch reset control

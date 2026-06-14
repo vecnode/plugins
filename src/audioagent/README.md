@@ -1,25 +1,25 @@
 # audioagent
 
-Pure C++ library for embedded-sample playback, offline MIR (note detection and pitch shift), waveform modelling, and Camelot wheel geometry. Host plugins link it and wire their own UI — [CamelotSynth](../../CamelotSynth/) is the reference iPlug2 integration.
+Pure C++ library for embedded-sample playback, real-time pitch, offline MIR (note detection), waveform modelling, and Camelot wheel geometry. Host plugins link it and wire their own UI — [CamelotSynth](../../CamelotSynth/) is the reference iPlug2 integration.
 
 ## What lives here
 
 | Module | Role |
 |--------|------|
-| `dsp/` | Real-time playback — `SampleBuffer`, `SamplePlayer`, `SampleTransport`, `OutputLimiter` |
-| `analysis/` | Background worker + audioFlux PitchYIN / pitchShift |
+| `dsp/` | Real-time playback — `SampleBuffer`, `SamplePlayer`, `SampleTransport`, `PitchStreamPipeline`, `OutputLimiter` |
+| `analysis/` | Background worker + audioFlux (detect on worker; pitch chunks on `PitchStreamWorker`) |
 | `model/` | `WaveformEnvelope` (display data derived from buffers) |
 | `camelot/` | `WheelLayout` — B1–B36 spoke/zone geometry and hit-testing |
-| `SamplerEngine.h` | Facade orchestrating transport, worker jobs, and buffer swaps |
+| `SamplerEngine.h` | Facade orchestrating transport, streaming pitch, detect worker, waveform |
 
 ## Thread model
 
 | Context | Allowed | Forbidden |
 |---------|---------|-----------|
-| `ProcessBlock` | Mix, gain, atomic buffer swap | audioFlux, heap churn, locks |
-| Param scheduling | O(1) transport + atomic request flags | Full-buffer copies, MIR |
-| `SamplerEngine::Tick()` | Snapshot capture, worker queue, pitch staging | Blocking on worker |
-| Worker thread | audioFlux YIN / pitchShift | Any UI |
+| `ProcessBlock` | Mix, gain, read pitched cache / dry fallback | audioFlux, heap churn, locks |
+| Param scheduling | O(1) transport + `BeginPitchStream` | Full-buffer copies, MIR |
+| `SamplerEngine::Tick()` | Kick pitch scheduler, detect worker queue | Blocking on worker |
+| `PitchStreamWorker` | audioFlux pitchShift per **10 s block** | Any UI, ProcessBlock |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for transport/seek de-clicking and module dependency rules.
 
@@ -40,11 +40,12 @@ mEngine.ProcessBlock(outputs, nChans, nFrames, targetGain, mGainSmoother);
 // OnParamChange
 mEngine.SchedulePlay(sampleOffset);
 mEngine.RequestDetectNote();
+mEngine.RequestPitchUpOne();  // 10 s block pipeline; pitched when block ready
 
 // OnIdle (UI timer)
 mEngine.Tick();
 const auto& ui = mEngine.GetWorkerUiState();
-// map ui.detectPhase / ui.pitchPhase to editor controls
+// ui.detectPhase for detect; ui.pitchLabelChanged for +1 label
 ```
 
 ## Third-party dependencies

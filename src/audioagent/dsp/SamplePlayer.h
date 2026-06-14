@@ -1,6 +1,7 @@
 #pragma once
 
 #include "OutputLimiter.h"
+#include "PitchStreamPipeline.h"
 #include "SampleBuffer.h"
 #include "audioagent/iplug_bridge.h"
 #include <algorithm>
@@ -54,12 +55,57 @@ public:
     mAfterTransportFade = AfterTransportFade::None;
     mOutputGain = 1.f;
     EndSeekCrossfade();
+    mBufferSwapCrossfade = false;
+    mSwapOutLeft = nullptr;
+    mSwapOutRight = nullptr;
+    mSwapOutLength = 0;
     mLastOutL = 0.f;
     mLastOutR = 0.f;
     mLimiter.Reset();
     ClearSchedule();
     ClearScheduledSeek();
   }
+
+  /**
+   * Hot-swap sample data without stopping transport.
+   * Crossfades dry→pitched at the current playhead when audibly playing.
+   */
+  void ReplaceBufferKeepingTransport(const SampleBuffer& buffer, float playheadNorm)
+  {
+    if (!buffer.IsLoaded() || buffer.GetLength() <= 0)
+      return;
+
+    playheadNorm = (std::max)(0.f, (std::min)(1.f, playheadNorm));
+    const double newPos = NormalizedToPositionOnLength(buffer.GetLength(), playheadNorm);
+
+    if (!ShouldAudiblySeek() || !mLeft || mLength <= 0)
+    {
+      mLeft = buffer.GetLeft();
+      mRight = buffer.GetRight();
+      mLength = buffer.GetLength();
+      ApplySilentSeek(newPos);
+      mPlayhead.store(static_cast<int>(mReadHeadFrac));
+      return;
+    }
+
+    CommitSeekCrossfadePosition();
+
+    mSwapOutLeft = mLeft;
+    mSwapOutRight = mRight ? mRight : mLeft;
+    mSwapOutLength = mLength;
+
+    mLeft = buffer.GetLeft();
+    mRight = buffer.GetRight();
+    mLength = buffer.GetLength();
+
+    mOutgoingReadFrac = CurrentAudiblePosition();
+    mIncomingReadFrac = newPos;
+    mSeekCrossfadeRemaining = mSeekCrossfadeSamples;
+    mBufferSwapCrossfade = true;
+    mLimiter.Reset();
+  }
+
+  void SetPitchStream(PitchStreamPipeline* stream) { mPitchStream = stream; }
 
   void ScheduleCommand(ScheduledCommand command, int sampleOffset)
   {
@@ -219,8 +265,16 @@ private:
 
   double NormalizedToPosition(float norm) const
   {
+    return NormalizedToPositionOnLength(mLength, norm);
+  }
+
+  static double NormalizedToPositionOnLength(int length, float norm)
+  {
     norm = (std::max)(0.f, (std::min)(1.f, norm));
-    return static_cast<double>(norm) * static_cast<double>(mLength - 1);
+    if (length <= 1)
+      return 0.;
+
+    return static_cast<double>(norm) * static_cast<double>(length - 1);
   }
 
   static float EqualPowerGainOut(float t)
@@ -237,15 +291,20 @@ private:
 
   sample ReadChannel(const sample* channel, double position) const
   {
-    if (!channel || mLength <= 0)
+    return ReadChannelFrom(channel, mLength, position);
+  }
+
+  static sample ReadChannelFrom(const sample* channel, int length, double position)
+  {
+    if (!channel || length <= 0)
       return 0.f;
 
-    if (mLength == 1)
+    if (length == 1)
       return channel[0];
 
-    position = (std::max)(0., (std::min)(position, static_cast<double>(mLength - 1)));
+    position = (std::max)(0., (std::min)(position, static_cast<double>(length - 1)));
     const int i0 = static_cast<int>(position);
-    const int i1 = (std::min)(i0 + 1, mLength - 1);
+    const int i1 = (std::min)(i0 + 1, length - 1);
     const float frac = static_cast<float>(position - static_cast<double>(i0));
     return channel[i0] * (1.f - frac) + channel[i1] * frac;
   }
@@ -268,6 +327,10 @@ private:
     mSeekCrossfadeRemaining = 0;
     mOutgoingReadFrac = 0.;
     mIncomingReadFrac = 0.;
+    mBufferSwapCrossfade = false;
+    mSwapOutLeft = nullptr;
+    mSwapOutRight = nullptr;
+    mSwapOutLength = 0;
   }
 
   void CommitSeekCrossfadePosition()
@@ -344,10 +407,35 @@ private:
     const float gOut = 1.f - t;
     const float gIn = t;
 
-    const sample oldL = ReadChannel(mLeft, mOutgoingReadFrac);
-    const sample oldR = ReadChannel(mRight ? mRight : mLeft, mOutgoingReadFrac);
-    const sample newL = ReadChannel(mLeft, mIncomingReadFrac);
-    const sample newR = ReadChannel(mRight ? mRight : mLeft, mIncomingReadFrac);
+    sample oldL = 0.f;
+    sample oldR = 0.f;
+    sample newL = 0.f;
+    sample newR = 0.f;
+
+    if (mPitchStream && mPitchStream->IsActive())
+    {
+      if (mBufferSwapCrossfade)
+      {
+        mPitchStream->ReadStereo(mOutgoingReadFrac, mSwapOutLeft, mSwapOutRight, mSwapOutLength, oldL, oldR);
+        mPitchStream->ReadStereo(mIncomingReadFrac, mLeft, mRight, mLength, newL, newR);
+      }
+      else
+      {
+        mPitchStream->ReadStereo(mOutgoingReadFrac, mLeft, mRight, mLength, oldL, oldR);
+        mPitchStream->ReadStereo(mIncomingReadFrac, mLeft, mRight, mLength, newL, newR);
+      }
+    }
+    else
+    {
+      oldL = mBufferSwapCrossfade
+        ? ReadChannelFrom(mSwapOutLeft, mSwapOutLength, mOutgoingReadFrac)
+        : ReadChannel(mLeft, mOutgoingReadFrac);
+      oldR = mBufferSwapCrossfade
+        ? ReadChannelFrom(mSwapOutRight ? mSwapOutRight : mSwapOutLeft, mSwapOutLength, mOutgoingReadFrac)
+        : ReadChannel(mRight ? mRight : mLeft, mOutgoingReadFrac);
+      newL = ReadChannel(mLeft, mIncomingReadFrac);
+      newR = ReadChannel(mRight ? mRight : mLeft, mIncomingReadFrac);
+    }
 
     outL = static_cast<sample>(oldL * gOut + newL * gIn);
     outR = static_cast<sample>(oldR * gOut + newR * gIn);
@@ -365,8 +453,14 @@ private:
 
   void RenderPlaybackSample(sample& outL, sample& outR)
   {
-    outL = ReadChannel(mLeft, mReadHeadFrac);
-    outR = ReadChannel(mRight ? mRight : mLeft, mReadHeadFrac);
+    if (mPitchStream && mPitchStream->IsActive())
+      mPitchStream->ReadStereo(mReadHeadFrac, mLeft, mRight, mLength, outL, outR);
+    else
+    {
+      outL = ReadChannel(mLeft, mReadHeadFrac);
+      outR = ReadChannel(mRight ? mRight : mLeft, mReadHeadFrac);
+    }
+
     mReadHeadFrac += 1.;
   }
 
@@ -506,6 +600,13 @@ private:
   std::atomic<bool> mScheduledSeekPending {false};
   std::atomic<float> mScheduledSeekNorm {0.f};
   std::atomic<int> mScheduledSeekOffset {0};
+
+  bool mBufferSwapCrossfade = false;
+  const sample* mSwapOutLeft = nullptr;
+  const sample* mSwapOutRight = nullptr;
+  int mSwapOutLength = 0;
+
+  PitchStreamPipeline* mPitchStream = nullptr;
 
   OutputLimiter mLimiter;
 };

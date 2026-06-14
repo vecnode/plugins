@@ -116,12 +116,14 @@ void CamelotSynth::ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics)
 {
 #if IPLUG_EDITOR
   const bool workerBusy = mEngine.IsWorkerBusy();
+  const bool pitchCatchingUp = mEngine.IsPitchCatchingUp();
   const bool hasReference = mEngine.HasReferenceNote();
   const auto& ui = mEngine.GetWorkerUiState();
 
   if (auto* pPitchButton = pGraphics->GetControlWithTag(kCtrlTagPitchUpOne))
   {
-    pPitchButton->SetDisabled(workerBusy || !hasReference);
+    pPitchButton->SetDisabled(pitchCatchingUp || !hasReference
+                              || mEngine.GetPitchSemitones() >= audioagent::SamplerEngine::kMaxPitchSemitones);
     ::igraphics::RequestControlRepaint(pPitchButton);
   }
 
@@ -155,29 +157,19 @@ void CamelotSynth::ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics)
     }
   }
 
-  if (ui.pitchChanged)
+  if (ui.pitchLabelChanged)
   {
     if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
     {
-      auto* pLabel = pNote->As<::igraphics::DetectedNoteLabelControl>();
-      switch (ui.pitchPhase)
-      {
-        case audioagent::OfflineSampleWorker::Phase::Queued:
-        case audioagent::OfflineSampleWorker::Phase::Running:
-          pLabel->SetProcessing();
-          break;
-        case audioagent::OfflineSampleWorker::Phase::Succeeded:
-          if (ui.pitchResult.ok)
-            pLabel->SetText(mEngine.GetReferenceNote().text);
-          else
-            pLabel->SetText("Note: --");
-          break;
-        case audioagent::OfflineSampleWorker::Phase::Failed:
-          pLabel->SetText(mEngine.HasReferenceNote() ? mEngine.GetReferenceNote().text : "Note: --");
-          break;
-        default:
-          break;
-      }
+      pNote->As<::igraphics::DetectedNoteLabelControl>()->SetText(ui.pitchLabelNote.text);
+      ::igraphics::RequestControlRepaint(pNote);
+    }
+  }
+  else if (pitchCatchingUp && mEngine.IsPitchStreamActive())
+  {
+    if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
+    {
+      pNote->As<::igraphics::DetectedNoteLabelControl>()->SetProcessing();
       ::igraphics::RequestControlRepaint(pNote);
     }
   }

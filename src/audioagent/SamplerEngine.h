@@ -1,8 +1,8 @@
 #pragma once
 
 #include "analysis/OfflineSampleWorker.h"
+#include "analysis/SampleNoteDetector.h"
 #include "analysis/SampleProcessSnapshot.h"
-#include "dsp/SampleBuffer.h"
 #include "dsp/SampleTransport.h"
 #include "model/WaveformEnvelope.h"
 #include "audioagent/iplug_bridge.h"
@@ -19,32 +19,31 @@ struct WorkerUiState
   OfflineSampleWorker::Phase detectPhase = OfflineSampleWorker::Phase::Idle;
   DetectedNote detectNote;
 
-  bool pitchChanged = false;
-  OfflineSampleWorker::Phase pitchPhase = OfflineSampleWorker::Phase::Idle;
-  OfflineSampleWorker::PitchResult pitchResult;
+  bool pitchLabelChanged = false;
+  DetectedNote pitchLabelNote;
 };
 
 /**
- * Sampler engine — orchestrates transport, offline MIR, and waveform model.
+ * Sampler engine — transport, audioFlux detect on worker, streaming pitch read-ahead.
  *
- * Threading:
- *  - ProcessBlock / OnParamChange scheduling: real-time safe (O(1) flags + mixing).
- *  - Tick(): UI-timer work — snapshot capture, worker queue, pitch buffer staging.
- *  - Host plugin maps Tick() results to IGraphics; this class never touches UI.
+ * +1 pitch: audioFlux chunk pipeline fills cache ahead of playhead; playback never stops.
  */
 class SamplerEngine
 {
 public:
   static constexpr int kWaveformPoints = 1024;
+  static constexpr int kMaxPitchSemitones = 12;
 
   void SetSampleRate(double sampleRate) { mTransport.SetSampleRate(sampleRate); }
 
   void Reset()
   {
     mReferenceNote = {};
+    mBaseReferenceNote = {};
+    mPitchSemitones = 0;
     mPendingDetectRequest.store(false, std::memory_order_release);
-    mPendingPitchRequest.store(false, std::memory_order_release);
     mForcePlayhead = false;
+    mTransport.ResetPitchStream();
   }
 
   bool LoadEmbedded(const char* resourceFileName, double hostSampleRate)
@@ -88,25 +87,45 @@ public:
 
   void RequestDetectNote() { mPendingDetectRequest.store(true, std::memory_order_release); }
 
+  /** Start / extend streaming audioFlux +1 from the current playhead. */
   void RequestPitchUpOne()
   {
-    if (!mReferenceNote.valid)
+    if (!mBaseReferenceNote.valid)
       return;
 
-    mPitchRequestPlayheadNorm = mTransport.GetPlayheadNorm();
-    mPendingPitchRequest.store(true, std::memory_order_release);
+    if (mPitchSemitones >= kMaxPitchSemitones)
+      return;
+
+    const int nextSemitones = mPitchSemitones + 1;
+    const int origin = mTransport.GetPlayheadSample();
+
+    mTransport.BeginPitchStream(origin, nextSemitones);
+    mPitchSemitones = nextSemitones;
+    mReferenceNote = SampleNoteDetector::Transpose(mBaseReferenceNote, mPitchSemitones);
+
+    mUiWorkerState.pitchLabelChanged = true;
+    mUiWorkerState.pitchLabelNote = mReferenceNote;
   }
 
-  /** UI timer — queue offline jobs and apply non-UI pitch staging. */
+  int GetPitchSemitones() const { return mPitchSemitones; }
+
+  bool IsPitchStreamActive() const { return mTransport.IsPitchStreamActive(); }
+
+  bool IsPitchCatchingUp() const
+  {
+    return mTransport.IsPitchStreamCatchingUp() || mTransport.IsPitchWorkerBusy();
+  }
+
   void Tick()
   {
+    mTransport.KickPitchScheduler();
     ProcessPendingOfflineJobs();
     PollWorkerUiState();
   }
 
   bool IsWorkerBusy() const { return mWorker.IsBusy(); }
 
-  bool HasReferenceNote() const { return mReferenceNote.valid; }
+  bool HasReferenceNote() const { return mBaseReferenceNote.valid; }
 
   const DetectedNote& GetReferenceNote() const { return mReferenceNote; }
 
@@ -124,7 +143,11 @@ public:
 
   const WorkerUiState& GetWorkerUiState() const { return mUiWorkerState; }
 
-  void ClearWorkerUiState() { mUiWorkerState = {}; }
+  void ClearWorkerUiState()
+  {
+    mUiWorkerState.detectChanged = false;
+    mUiWorkerState.pitchLabelChanged = false;
+  }
 
   OfflineSampleWorker& GetWorker() { return mWorker; }
 
@@ -139,27 +162,18 @@ private:
     if (mWorker.IsBusy())
       return;
 
-    if (mPendingDetectRequest.exchange(false))
-    {
-      if (!mTransport.IsSampleLoaded())
-        return;
-
-      SampleProcessSnapshot::Capture(mTransport.GetBuffer(), mWorker);
-      mWorker.RequestDetect();
+    if (!mPendingDetectRequest.exchange(false))
       return;
-    }
 
-    if (mPendingPitchRequest.exchange(false) && mReferenceNote.valid)
-    {
-      SampleProcessSnapshot::Capture(mTransport.GetBuffer(), mWorker);
-      mWorker.RequestPitchUpOne(mReferenceNote);
-    }
+    if (!mTransport.IsSampleLoaded())
+      return;
+
+    SampleProcessSnapshot::Capture(mTransport.GetBuffer(), mWorker);
+    mWorker.RequestDetect();
   }
 
   void PollWorkerUiState()
   {
-    mUiWorkerState = {};
-
     DetectedNote detectNote;
     if (mWorker.ConsumeDetectUpdate(mUiWorkerState.detectPhase, detectNote))
     {
@@ -167,36 +181,18 @@ private:
       mUiWorkerState.detectNote = detectNote;
 
       if (mUiWorkerState.detectPhase == OfflineSampleWorker::Phase::Succeeded)
-        mReferenceNote = detectNote;
-      else if (mUiWorkerState.detectPhase == OfflineSampleWorker::Phase::Failed)
-        mReferenceNote = {};
-    }
-
-    OfflineSampleWorker::PitchResult pitchResult;
-    if (mWorker.ConsumePitchUpdate(mUiWorkerState.pitchPhase, pitchResult))
-    {
-      mUiWorkerState.pitchChanged = true;
-      mUiWorkerState.pitchResult = pitchResult;
-
-      if (mUiWorkerState.pitchPhase == OfflineSampleWorker::Phase::Succeeded && pitchResult.ok)
       {
-        const double hostRate = mTransport.GetBuffer().GetHostSampleRate();
-        SampleBuffer preview;
-        preview.AssignFromFloat(pitchResult.left, pitchResult.right, hostRate);
-        mWaveform.BuildFrom(preview, kWaveformPoints);
-        mReferenceNote = pitchResult.note;
-
-        SampleProcessSnapshot::CaptureChannels(pitchResult.left.data(),
-                                               pitchResult.right.data(),
-                                               static_cast<int>(pitchResult.left.size()),
-                                               static_cast<int>(std::lround(hostRate)),
-                                               mWorker);
-
-        mTransport.StageProcessedBuffer(std::move(pitchResult.left),
-                                        std::move(pitchResult.right),
-                                        hostRate,
-                                        mPitchRequestPlayheadNorm);
-        mForcePlayhead = true;
+        mBaseReferenceNote = detectNote;
+        mPitchSemitones = 0;
+        mReferenceNote = detectNote;
+        mTransport.EndPitchStream();
+      }
+      else if (mUiWorkerState.detectPhase == OfflineSampleWorker::Phase::Failed)
+      {
+        mBaseReferenceNote = {};
+        mReferenceNote = {};
+        mPitchSemitones = 0;
+        mTransport.EndPitchStream();
       }
     }
   }
@@ -204,13 +200,13 @@ private:
   SampleTransport mTransport;
   WaveformEnvelope mWaveform;
   OfflineSampleWorker mWorker;
+  DetectedNote mBaseReferenceNote;
   DetectedNote mReferenceNote;
   WorkerUiState mUiWorkerState;
-  float mPitchRequestPlayheadNorm = 0.f;
+  int mPitchSemitones = 0;
   bool mForcePlayhead = false;
 
   std::atomic<bool> mPendingDetectRequest {false};
-  std::atomic<bool> mPendingPitchRequest {false};
 };
 
 } // namespace audioagent

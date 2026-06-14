@@ -1,4 +1,4 @@
-# iPlug2 VST Plugins
+# iPlug2 Extensions
 
 Out-of-source plugin projects linked to a sibling iPlug2 checkout.
 

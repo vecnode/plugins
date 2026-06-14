@@ -1,21 +1,19 @@
 #pragma once
 
+#include "PitchStreamPipeline.h"
 #include "SampleBuffer.h"
 #include "SamplePlayer.h"
 #include "audioagent/iplug_bridge.h"
-
-#include <atomic>
-#include <vector>
 
 namespace audioagent
 {
 
 /**
- * Embedded sample playback engine (buffer + player).
+ * Embedded sample playback engine with streaming audioFlux pitch read-ahead.
  *
  * Real-time contract:
- *  - ProcessBlock only mixes audio and may apply a pre-built buffer swap (O(1) flag + memcpy).
- *  - Offline pitch processing never runs here; see OfflineSampleWorker + StageProcessedBuffer.
+ *  - ProcessBlock only mixes audio; pitch chunks run on PitchStreamWorker.
+ *  - Dry buffer is never replaced; pitched audio is read from PitchStreamPipeline cache.
  */
 class SampleTransport
 {
@@ -27,12 +25,35 @@ public:
     if (!mBuffer.LoadEmbedded(resourceFileName, hostSampleRate))
       return false;
 
+    mPitchStream.BindDryBuffer(mBuffer);
     mPlayer.SetBuffer(mBuffer);
+    mPlayer.SetPitchStream(&mPitchStream);
     mWaveformDirty = true;
     return true;
   }
 
-  void SetSampleRate(double hostSampleRate) { mPlayer.SetSampleRate(hostSampleRate); }
+  void SetSampleRate(double hostSampleRate)
+  {
+    mPlayer.SetSampleRate(hostSampleRate);
+  }
+
+  void ResetPitchStream()
+  {
+    mPitchStream.Reset();
+    mPlayer.SetPitchStream(&mPitchStream);
+  }
+
+  void BeginPitchStream(int originSample, int semitones) { mPitchStream.BeginStream(originSample, semitones); }
+
+  void EndPitchStream() { mPitchStream.EndStream(); }
+
+  bool IsPitchStreamActive() const { return mPitchStream.IsActive(); }
+
+  bool IsPitchStreamCatchingUp() const { return mPitchStream.IsCatchingUp(); }
+
+  bool IsPitchWorkerBusy() const { return mPitchStream.IsWorkerBusy(); }
+
+  int GetPitchSemitones() const { return mPitchStream.GetSemitones(); }
 
   bool IsSampleLoaded() const { return mBuffer.IsLoaded(); }
 
@@ -58,37 +79,34 @@ public:
 
   void ProcessBlock(sample** outputs, int nOutputs, int nFrames, sample targetGain, LogParamSmooth<sample, 1>& gainSmoother)
   {
-    ApplyPendingSwapIfReady();
     mPlayer.ProcessBlock(outputs, nOutputs, nFrames, targetGain, gainSmoother);
+    SyncPitchPlayhead();
+    mPitchStream.KickScheduler();
   }
+
+  void SyncPitchPlayhead()
+  {
+    if (!mBuffer.IsLoaded() || mBuffer.GetLength() <= 1)
+      return;
+
+    const float norm = mPlayer.GetPlayheadNorm();
+    const int sampleIndex = static_cast<int>(std::lround(norm * static_cast<float>(mBuffer.GetLength() - 1)));
+    mPitchStream.SetPlayheadSample(sampleIndex);
+  }
+
+  void KickPitchScheduler() { mPitchStream.KickScheduler(); }
 
   bool IsPlaying() const { return mPlayer.IsPlaying(); }
 
   float GetPlayheadNorm() const { return mPlayer.GetPlayheadNorm(); }
 
-  void ApplyPendingSwapIfReady()
+  int GetPlayheadSample() const
   {
-    if (!mSwapPending.load(std::memory_order_acquire))
-      return;
+    if (!mBuffer.IsLoaded() || mBuffer.GetLength() <= 1)
+      return 0;
 
-    mSwapPending.store(false, std::memory_order_release);
-
-    mBuffer.AssignFromFloat(mStagingLeft, mStagingRight, mStagingSampleRate);
-    mPlayer.SetBuffer(mBuffer);
-    mPlayer.SilentSeekToNorm(mStagingPlayheadNorm);
-    mWaveformDirty = true;
-  }
-
-  void StageProcessedBuffer(std::vector<float>&& left,
-                            std::vector<float>&& right,
-                            double sampleRate,
-                            float playheadNorm)
-  {
-    mStagingLeft = std::move(left);
-    mStagingRight = std::move(right);
-    mStagingSampleRate = sampleRate;
-    mStagingPlayheadNorm = playheadNorm;
-    mSwapPending.store(true, std::memory_order_release);
+    const float norm = mPlayer.GetPlayheadNorm();
+    return static_cast<int>(std::lround(norm * static_cast<float>(mBuffer.GetLength() - 1)));
   }
 
   bool ConsumeWaveformDirty()
@@ -100,16 +118,13 @@ public:
 
   const SampleBuffer& GetBuffer() const { return mBuffer; }
 
+  PitchStreamPipeline& GetPitchStream() { return mPitchStream; }
+
 private:
   SampleBuffer mBuffer;
   SamplePlayer mPlayer;
+  PitchStreamPipeline mPitchStream;
   bool mWaveformDirty = false;
-
-  std::vector<float> mStagingLeft;
-  std::vector<float> mStagingRight;
-  double mStagingSampleRate = 44100.;
-  float mStagingPlayheadNorm = 0.f;
-  std::atomic<bool> mSwapPending {false};
 };
 
 } // namespace audioagent

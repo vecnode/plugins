@@ -90,7 +90,7 @@ public:
 
   void SetAnalyzing() { SetBusy("Detecting..."); }
 
-  void SetProcessing() { SetBusy("Processing pitch..."); }
+  void SetProcessing() { SetBusy("Pitching +1..."); }
 
   void Draw(IGraphics& g) override
   {
