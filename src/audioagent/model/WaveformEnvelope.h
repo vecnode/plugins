@@ -4,7 +4,8 @@
 #include <algorithm>
 #include <vector>
 
-BEGIN_IPLUG_NAMESPACE
+namespace audioagent
+{
 
 /** Downsampled min/max envelope used for waveform display. */
 class WaveformEnvelope
@@ -63,4 +64,4 @@ private:
   std::vector<float> mMin;
 };
 
-END_IPLUG_NAMESPACE
+} // namespace audioagent

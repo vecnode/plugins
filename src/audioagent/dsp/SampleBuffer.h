@@ -1,13 +1,14 @@
 #pragma once
 
+#include "audioagent/iplug_bridge.h"
 #include "IPlugPaths.h"
-#include "heapbuf.h"
 #include <cmath>
 #include <cstring>
 #include <cstdint>
 #include <vector>
 
-BEGIN_IPLUG_NAMESPACE
+namespace audioagent
+{
 
 /** Decodes an embedded PCM WAV resource into host-rate float buffers (RT-safe after load). */
 class SampleBuffer
@@ -22,19 +23,18 @@ public:
     mLoaded = false;
 
 #ifdef OS_WIN
-    // Must use the plugin DLL instance — GetModuleHandle(nullptr) resolves to the host EXE (Reaper).
     extern HINSTANCE gHINSTANCE;
     void* hInstance = gHINSTANCE;
     if (!hInstance)
       return false;
 
     WDL_String resID;
-    const EResourceLocation found = LocateResource(resourceFileName, "wav", resID, nullptr, hInstance, nullptr);
-    if (found != EResourceLocation::kWinBinary)
+    const iplug::EResourceLocation found = iplug::LocateResource(resourceFileName, "wav", resID, nullptr, hInstance, nullptr);
+    if (found != iplug::kWinBinary)
       return false;
 
     int size = 0;
-    const void* data = LoadWinResource(resID.Get(), "wav", size, hInstance);
+    const void* data = iplug::LoadWinResource(resID.Get(), "wav", size, hInstance);
     if (!data || size < 44)
       return false;
 
@@ -217,4 +217,4 @@ private:
   bool mLoaded = false;
 };
 
-END_IPLUG_NAMESPACE
+} // namespace audioagent

@@ -5,12 +5,13 @@
 
 #include <cmath>
 
-BEGIN_IPLUG_NAMESPACE
+namespace audioagent
+{
 
 /**
  * Builds the immutable float snapshot consumed by OfflineSampleWorker.
  *
- * Threading: call from OnIdle (UI timer) only. Never from ProcessBlock or
+ * Threading: call from the UI timer only. Never from ProcessBlock or
  * OnParamChange — copying the full buffer on the audio thread would violate
  * real-time constraints for long samples.
  */
@@ -90,4 +91,4 @@ private:
   }
 };
 
-END_IPLUG_NAMESPACE
+} // namespace audioagent

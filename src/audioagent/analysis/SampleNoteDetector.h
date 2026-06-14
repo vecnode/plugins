@@ -11,7 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
-BEGIN_IPLUG_NAMESPACE
+namespace audioagent
+{
 
 struct DetectedNote
 {
@@ -221,8 +222,6 @@ private:
 
   static void FormatNoteName(float hz, char* out, size_t outSize)
   {
-    static const char* kNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-
     if (hz <= 0.f)
     {
       std::snprintf(out, outSize, "Note: --");
@@ -234,4 +233,4 @@ private:
   }
 };
 
-END_IPLUG_NAMESPACE
+} // namespace audioagent

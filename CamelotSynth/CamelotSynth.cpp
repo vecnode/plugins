@@ -2,13 +2,10 @@
 #include "CamelotSynthEditor.h"
 #include "WaveformControl.h"
 #include "UiPaintPolicy.h"
-#include "SampleBuffer.h"
-#include "SampleProcessSnapshot.h"
 #include "IPlug_include_in_plug_src.h"
 
 namespace
 {
-constexpr int kWaveformPoints = 1024;
 constexpr double kGainSmoothMs = 20.;
 constexpr int kHiddenTransportFlags = IParam::kFlagMeta | IParam::kFlagCannotAutomate;
 }
@@ -58,7 +55,7 @@ void CamelotSynth::ProcessBlock(sample** inputs, sample** outputs, int nFrames)
     memset(outputs[c], 0, nFrames * sizeof(sample));
 
   const sample targetGain = static_cast<sample>(GetParam(kParamGain)->Value() / 100.);
-  mSampleTransport.ProcessBlock(outputs, nChans, nFrames, targetGain, mGainSmoother);
+  mEngine.ProcessBlock(outputs, nChans, nFrames, targetGain, mGainSmoother);
 
   mMeterSender.ProcessBlock(outputs, nFrames, kCtrlTagMeter);
 }
@@ -80,21 +77,21 @@ void CamelotSynth::OnIdle()
     {
       auto* pCtrl = pWaveform->As<::igraphics::SampleWaveformControl>();
 
-      if (mSampleTransport.ConsumeWaveformDirty() && mWaveformEnvelope.IsValid())
+      if (mEngine.ConsumeWaveformDirty() && mEngine.GetWaveform().IsValid())
       {
-        pCtrl->SetEnvelope(mWaveformEnvelope.Max(), mWaveformEnvelope.Min());
+        pCtrl->SetEnvelope(mEngine.GetWaveform().Max(), mEngine.GetWaveform().Min());
 
         if (auto* pLength = pGraphics->GetControlWithTag(kCtrlTagSampleLength))
         {
           pLength->As<::igraphics::SampleLengthLabelControl>()->SetDurationSeconds(
-            mSampleTransport.GetBuffer().GetDurationSeconds());
+            mEngine.GetTransport().GetBuffer().GetDurationSeconds());
         }
       }
 
-      if (!pCtrl->IsScrubbing() && mUiPlayheadBridge.ShouldSyncPlayhead(mSampleTransport))
-        pCtrl->SyncPlayheadFromDSP(mSampleTransport.GetPlayheadNorm());
+      if (!pCtrl->IsScrubbing() && mEngine.ShouldSyncPlayhead())
+        pCtrl->SyncPlayheadFromDSP(mEngine.GetTransport().GetPlayheadNorm());
 
-      mUiPlayheadBridge.ClearPlayheadForce();
+      mEngine.ClearPlayheadForce();
     }
 
     SyncOfflineWorkerState();
@@ -107,41 +104,20 @@ void CamelotSynth::SyncOfflineWorkerState()
 #if IPLUG_EDITOR
   if (auto* pGraphics = GetUI())
   {
-    ProcessPendingOfflineJobs();
+    mEngine.Tick();
     ApplyOfflineWorkerUiUpdates(pGraphics);
   }
 #else
-  ProcessPendingOfflineJobs();
+  mEngine.Tick();
 #endif
-}
-
-void CamelotSynth::ProcessPendingOfflineJobs()
-{
-  if (mOfflineWorker.IsBusy())
-    return;
-
-  if (mPendingDetectRequest.exchange(false))
-  {
-    if (!mSampleTransport.IsSampleLoaded())
-      LoadEmbeddedSample();
-
-    SampleProcessSnapshot::Capture(mSampleTransport.GetBuffer(), mOfflineWorker);
-    mOfflineWorker.RequestDetect();
-    return;
-  }
-
-  if (mPendingPitchRequest.exchange(false) && mReferenceNote.valid)
-  {
-    SampleProcessSnapshot::Capture(mSampleTransport.GetBuffer(), mOfflineWorker);
-    mOfflineWorker.RequestPitchUpOne(mReferenceNote);
-  }
 }
 
 void CamelotSynth::ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics)
 {
 #if IPLUG_EDITOR
-  const bool workerBusy = mOfflineWorker.IsBusy();
-  const bool hasReference = mReferenceNote.valid;
+  const bool workerBusy = mEngine.IsWorkerBusy();
+  const bool hasReference = mEngine.HasReferenceNote();
+  const auto& ui = mEngine.GetWorkerUiState();
 
   if (auto* pPitchButton = pGraphics->GetControlWithTag(kCtrlTagPitchUpOne))
   {
@@ -155,25 +131,21 @@ void CamelotSynth::ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics)
     ::igraphics::RequestControlRepaint(pDetectButton);
   }
 
-  OfflineSampleWorker::Phase phase = OfflineSampleWorker::Phase::Idle;
-  DetectedNote detectNote;
-  if (mOfflineWorker.ConsumeDetectUpdate(phase, detectNote))
+  if (ui.detectChanged)
   {
     if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
     {
       auto* pLabel = pNote->As<::igraphics::DetectedNoteLabelControl>();
-      switch (phase)
+      switch (ui.detectPhase)
       {
-        case OfflineSampleWorker::Phase::Queued:
-        case OfflineSampleWorker::Phase::Running:
+        case audioagent::OfflineSampleWorker::Phase::Queued:
+        case audioagent::OfflineSampleWorker::Phase::Running:
           pLabel->SetAnalyzing();
           break;
-        case OfflineSampleWorker::Phase::Succeeded:
-          mReferenceNote = detectNote;
-          pLabel->SetText(detectNote.text);
+        case audioagent::OfflineSampleWorker::Phase::Succeeded:
+          pLabel->SetText(ui.detectNote.text);
           break;
-        case OfflineSampleWorker::Phase::Failed:
-          mReferenceNote = {};
+        case audioagent::OfflineSampleWorker::Phase::Failed:
           pLabel->SetText("Note: --");
           break;
         default:
@@ -183,47 +155,25 @@ void CamelotSynth::ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics)
     }
   }
 
-  OfflineSampleWorker::PitchResult pitchResult;
-  if (mOfflineWorker.ConsumePitchUpdate(phase, pitchResult))
+  if (ui.pitchChanged)
   {
     if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
     {
       auto* pLabel = pNote->As<::igraphics::DetectedNoteLabelControl>();
-      switch (phase)
+      switch (ui.pitchPhase)
       {
-        case OfflineSampleWorker::Phase::Queued:
-        case OfflineSampleWorker::Phase::Running:
+        case audioagent::OfflineSampleWorker::Phase::Queued:
+        case audioagent::OfflineSampleWorker::Phase::Running:
           pLabel->SetProcessing();
           break;
-        case OfflineSampleWorker::Phase::Succeeded:
-          if (pitchResult.ok)
-          {
-            const double hostRate = mSampleTransport.GetBuffer().GetHostSampleRate();
-            SampleBuffer preview;
-            preview.AssignFromFloat(pitchResult.left, pitchResult.right, hostRate);
-            mWaveformEnvelope.BuildFrom(preview, kWaveformPoints);
-            mReferenceNote = pitchResult.note;
-
-            SampleProcessSnapshot::CaptureChannels(pitchResult.left.data(),
-                                                   pitchResult.right.data(),
-                                                   static_cast<int>(pitchResult.left.size()),
-                                                   static_cast<int>(std::lround(hostRate)),
-                                                   mOfflineWorker);
-
-            mSampleTransport.StageProcessedBuffer(std::move(pitchResult.left),
-                                                  std::move(pitchResult.right),
-                                                  hostRate,
-                                                  mPitchRequestPlayheadNorm);
-            mUiPlayheadBridge.MarkPlayheadDirty();
-            pLabel->SetText(mReferenceNote.text);
-          }
+        case audioagent::OfflineSampleWorker::Phase::Succeeded:
+          if (ui.pitchResult.ok)
+            pLabel->SetText(mEngine.GetReferenceNote().text);
           else
-          {
             pLabel->SetText("Note: --");
-          }
           break;
-        case OfflineSampleWorker::Phase::Failed:
-          pLabel->SetText(mReferenceNote.valid ? mReferenceNote.text : "Note: --");
+        case audioagent::OfflineSampleWorker::Phase::Failed:
+          pLabel->SetText(mEngine.HasReferenceNote() ? mEngine.GetReferenceNote().text : "Note: --");
           break;
         default:
           break;
@@ -231,6 +181,8 @@ void CamelotSynth::ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics)
       ::igraphics::RequestControlRepaint(pNote);
     }
   }
+
+  mEngine.ClearWorkerUiState();
 #else
   (void) pGraphics;
 #endif
@@ -241,25 +193,14 @@ void CamelotSynth::OnReset()
   mMeterSender.Reset(GetSampleRate());
   mGainSmoother.SetSmoothTime(kGainSmoothMs, GetSampleRate());
   mGainSmoother.SetValue(static_cast<sample>(GetParam(kParamGain)->Value() / 100.));
-  mSampleTransport.SetSampleRate(GetSampleRate());
-  mReferenceNote = {};
-  mPendingDetectRequest.store(false, std::memory_order_release);
-  mPendingPitchRequest.store(false, std::memory_order_release);
+  mEngine.SetSampleRate(GetSampleRate());
+  mEngine.Reset();
   LoadEmbeddedSample();
 }
 
 void CamelotSynth::LoadEmbeddedSample()
 {
-  if (mSampleTransport.LoadEmbedded(ATMOS_SAMPLE_FN, GetSampleRate()))
-  {
-    mWaveformEnvelope.BuildFrom(mSampleTransport.GetBuffer(), kWaveformPoints);
-    RebuildProcessSnapshot();
-  }
-}
-
-void CamelotSynth::RebuildProcessSnapshot()
-{
-  SampleProcessSnapshot::Capture(mSampleTransport.GetBuffer(), mOfflineWorker);
+  mEngine.LoadEmbedded(ATMOS_SAMPLE_FN, GetSampleRate());
 }
 
 void CamelotSynth::ResetTransportTrigger(int paramIdx)
@@ -277,50 +218,39 @@ void CamelotSynth::OnParamChange(int paramIdx, EParamSource source, int sampleOf
     case kParamTrigPlay:
       if (GetParam(kParamTrigPlay)->Bool())
       {
-        if (!mSampleTransport.IsSampleLoaded())
+        if (!mEngine.GetTransport().IsSampleLoaded())
           LoadEmbeddedSample();
 
-        mSampleTransport.SchedulePlay(offset);
-        mUiPlayheadBridge.MarkPlayheadDirty();
+        mEngine.SchedulePlay(offset);
       }
       ResetTransportTrigger(kParamTrigPlay);
       break;
 
     case kParamTrigPause:
       if (GetParam(kParamTrigPause)->Bool())
-      {
-        mSampleTransport.SchedulePause(offset);
-        mUiPlayheadBridge.MarkPlayheadDirty();
-      }
+        mEngine.SchedulePause(offset);
       ResetTransportTrigger(kParamTrigPause);
       break;
 
     case kParamTrigStop:
       if (GetParam(kParamTrigStop)->Bool())
-      {
-        mSampleTransport.ScheduleStop(offset);
-        mUiPlayheadBridge.MarkPlayheadDirty();
-      }
+        mEngine.ScheduleStop(offset);
       ResetTransportTrigger(kParamTrigStop);
       break;
 
     case kParamSeek:
-      mSampleTransport.ScheduleSeek(static_cast<float>(GetParam(kParamSeek)->Value()), offset);
-      mUiPlayheadBridge.MarkPlayheadDirty();
+      mEngine.ScheduleSeek(static_cast<float>(GetParam(kParamSeek)->Value()), offset);
       break;
 
     case kParamTrigDetectNote:
       if (GetParam(kParamTrigDetectNote)->Bool())
-        mPendingDetectRequest.store(true, std::memory_order_release);
+        mEngine.RequestDetectNote();
       ResetTransportTrigger(kParamTrigDetectNote);
       break;
 
     case kParamTrigPitchUpOne:
-      if (GetParam(kParamTrigPitchUpOne)->Bool() && mReferenceNote.valid)
-      {
-        mPitchRequestPlayheadNorm = mSampleTransport.GetPlayheadNorm();
-        mPendingPitchRequest.store(true, std::memory_order_release);
-      }
+      if (GetParam(kParamTrigPitchUpOne)->Bool() && mEngine.HasReferenceNote())
+        mEngine.RequestPitchUpOne();
       ResetTransportTrigger(kParamTrigPitchUpOne);
       break;
 

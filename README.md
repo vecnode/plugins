@@ -11,7 +11,9 @@ Out-of-source plugin projects linked to a sibling iPlug2 checkout.
 Dev/
 ├── iPlug2/
 └── plugins/
-    ├── CamelotSynth/    # embedded sample player
+    ├── src/
+    │   └── audioagent/  # shared DSP + MIR + Camelot wheel library
+    ├── CamelotSynth/    # iPlug2 plugin (uses audioagent)
     ├── assets/          # shared audio (gitignored)
     └── scripts/
 ```

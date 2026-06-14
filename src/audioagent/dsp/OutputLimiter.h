@@ -1,15 +1,15 @@
 #pragma once
 
+#include "audioagent/iplug_bridge.h"
 #include <algorithm>
 #include <cmath>
 
-BEGIN_IPLUG_NAMESPACE
+namespace audioagent
+{
 
 /**
  * Stereo-linked peak limiter for sample playback.
  * Fast attack catches single-sample seek/transport spikes; soft knee avoids hard-clip artifacts.
- *
- * Tune kCeiling (max peak) and kKnee (soft region width below ceiling).
  */
 class OutputLimiter
 {
@@ -24,10 +24,7 @@ public:
     mReleaseCoeff = static_cast<float>(std::exp(-1. / (mSampleRate * kReleaseMs * 0.001)));
   }
 
-  void Reset()
-  {
-    mGain = 1.f;
-  }
+  void Reset() { mGain = 1.f; }
 
   void ProcessStereo(sample& left, sample& right)
   {
@@ -73,4 +70,4 @@ private:
   float mGain = 1.f;
 };
 
-END_IPLUG_NAMESPACE
+} // namespace audioagent

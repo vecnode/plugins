@@ -2,12 +2,13 @@
 
 #include "SampleBuffer.h"
 #include "SamplePlayer.h"
-#include "Smoothers.h"
+#include "audioagent/iplug_bridge.h"
 
 #include <atomic>
 #include <vector>
 
-BEGIN_IPLUG_NAMESPACE
+namespace audioagent
+{
 
 /**
  * Embedded sample playback engine (buffer + player).
@@ -15,9 +16,6 @@ BEGIN_IPLUG_NAMESPACE
  * Real-time contract:
  *  - ProcessBlock only mixes audio and may apply a pre-built buffer swap (O(1) flag + memcpy).
  *  - Offline pitch processing never runs here; see OfflineSampleWorker + StageProcessedBuffer.
- *
- * Transport is driven by hidden trigger parameters scheduled with sample-accurate
- * offsets in OnParamChange (VST3 applies these in the same process() call as audio).
  */
 class SampleTransport
 {
@@ -34,10 +32,7 @@ public:
     return true;
   }
 
-  void SetSampleRate(double hostSampleRate)
-  {
-    mPlayer.SetSampleRate(hostSampleRate);
-  }
+  void SetSampleRate(double hostSampleRate) { mPlayer.SetSampleRate(hostSampleRate); }
 
   bool IsSampleLoaded() const { return mBuffer.IsLoaded(); }
 
@@ -59,10 +54,7 @@ public:
     mPlayer.ScheduleCommand(SamplePlayer::ScheduledCommand::Stop, sampleOffset);
   }
 
-  void ScheduleSeek(float norm, int sampleOffset)
-  {
-    mPlayer.ScheduleSeek(norm, sampleOffset);
-  }
+  void ScheduleSeek(float norm, int sampleOffset) { mPlayer.ScheduleSeek(norm, sampleOffset); }
 
   void ProcessBlock(sample** outputs, int nOutputs, int nFrames, sample targetGain, LogParamSmooth<sample, 1>& gainSmoother)
   {
@@ -74,7 +66,6 @@ public:
 
   float GetPlayheadNorm() const { return mPlayer.GetPlayheadNorm(); }
 
-  /** Apply a buffer prepared on the worker thread — call at the start of ProcessBlock only. */
   void ApplyPendingSwapIfReady()
   {
     if (!mSwapPending.load(std::memory_order_acquire))
@@ -121,4 +112,4 @@ private:
   std::atomic<bool> mSwapPending {false};
 };
 
-END_IPLUG_NAMESPACE
+} // namespace audioagent

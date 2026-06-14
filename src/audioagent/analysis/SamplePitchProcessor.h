@@ -6,7 +6,8 @@
 #include <cstring>
 #include <vector>
 
-BEGIN_IPLUG_NAMESPACE
+namespace audioagent
+{
 
 struct PitchProcessResult
 {
@@ -67,4 +68,4 @@ private:
   }
 };
 
-END_IPLUG_NAMESPACE
+} // namespace audioagent

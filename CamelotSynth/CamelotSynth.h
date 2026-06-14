@@ -1,8 +1,9 @@
 #pragma once
 
-// Plugin entry — implementation modules under src/ (see src/ARCHITECTURE.md).
+// Plugin entry — DSP and sampler logic live in src/audioagent (see audioagent/ARCHITECTURE.md).
 #include "IPlug_include_in_plug_hdr.h"
 #include "IControls.h"
+#include "audioagent/SamplerEngine.h"
 
 const int kNumPresets = 1;
 
@@ -30,16 +31,6 @@ enum EControlTags
   kNumCtrlTags
 };
 
-#if IPLUG_DSP
-#include "SampleTransport.h"
-#include "Smoothers.h"
-#include "WaveformEnvelope.h"
-#include "UiPlayheadBridge.h"
-#include "OfflineSampleWorker.h"
-
-#include <atomic>
-#endif
-
 using namespace iplug;
 using namespace igraphics;
 
@@ -51,7 +42,6 @@ public:
 
 #if IPLUG_EDITOR
   void OnUIOpen() override;
-  /** First OnIdle after UI attach; triggers ForceInitialFullPaint once (see UiPaintPolicy.h). */
   bool mEditorPaintPrimed = false;
 #endif
 
@@ -64,20 +54,11 @@ public:
 
 private:
   void LoadEmbeddedSample();
-  void RebuildProcessSnapshot();
   void ResetTransportTrigger(int paramIdx);
   void SyncOfflineWorkerState();
-  void ProcessPendingOfflineJobs();
   void ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics);
 
-  SampleTransport mSampleTransport;
-  WaveformEnvelope mWaveformEnvelope;
-  UiPlayheadBridge mUiPlayheadBridge;
-  OfflineSampleWorker mOfflineWorker;
-  DetectedNote mReferenceNote;
-  float mPitchRequestPlayheadNorm = 0.f;
-  std::atomic<bool> mPendingDetectRequest {false};
-  std::atomic<bool> mPendingPitchRequest {false};
+  audioagent::SamplerEngine mEngine;
   IPeakAvgSender<2> mMeterSender;
   LogParamSmooth<sample, 1> mGainSmoother;
 #endif

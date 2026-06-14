@@ -2,13 +2,14 @@
 
 #include "OutputLimiter.h"
 #include "SampleBuffer.h"
-#include "Smoothers.h"
+#include "audioagent/iplug_bridge.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 
-BEGIN_IPLUG_NAMESPACE
+namespace audioagent
+{
 
 /**
  * One-shot sample playback with interpolated reads.
@@ -509,4 +510,4 @@ private:
   OutputLimiter mLimiter;
 };
 
-END_IPLUG_NAMESPACE
+} // namespace audioagent

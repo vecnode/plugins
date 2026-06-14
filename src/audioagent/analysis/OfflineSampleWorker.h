@@ -10,7 +10,8 @@
 #include <utility>
 #include <vector>
 
-BEGIN_IPLUG_NAMESPACE
+namespace audioagent
+{
 
 /**
  * Single background worker for offline MIR and pitch processing.
@@ -19,7 +20,6 @@ BEGIN_IPLUG_NAMESPACE
  *  - Request* methods are O(1): queue state and wake the worker thread.
  *  - Heavy work (audioFlux YIN, pitch shift) runs only in WorkerLoop().
  *  - ProcessBlock never waits on this class; SampleTransport swaps buffers atomically.
- *  - OnIdle polls Consume*Update() to refresh the editor.
  */
 class OfflineSampleWorker
 {
@@ -58,10 +58,7 @@ public:
 
   OfflineSampleWorker() = default;
 
-  ~OfflineSampleWorker()
-  {
-    StopWorker();
-  }
+  ~OfflineSampleWorker() { StopWorker(); }
 
   OfflineSampleWorker(const OfflineSampleWorker&) = delete;
   OfflineSampleWorker& operator=(const OfflineSampleWorker&) = delete;
@@ -72,10 +69,7 @@ public:
     mSnapshot = std::move(snapshot);
   }
 
-  void RequestDetect()
-  {
-    QueueJob(JobType::DetectNote);
-  }
+  void RequestDetect() { QueueJob(JobType::DetectNote); }
 
   void RequestPitchUpOne(const DetectedNote& referenceNote)
   {
@@ -277,4 +271,4 @@ private:
   std::atomic<bool> mJobPending {false};
 };
 
-END_IPLUG_NAMESPACE
+} // namespace audioagent
