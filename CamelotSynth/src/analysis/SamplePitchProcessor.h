@@ -15,7 +15,7 @@ struct PitchProcessResult
   std::vector<float> right;
 };
 
-/** Offline pitch shift via audioFlux (time-stretch + resample) — worker thread only. */
+/** Offline pitch shift via audioFlux (time-stretch + resample). Worker thread only. */
 class SamplePitchProcessor
 {
 public:
@@ -33,8 +33,8 @@ public:
       return result;
 
     const int length = static_cast<int>(leftIn.size());
-    result.left.resize(static_cast<size_t>(length));
-    result.right.resize(static_cast<size_t>(length));
+    result.left.assign(static_cast<size_t>(length), 0.f);
+    result.right.assign(static_cast<size_t>(length), 0.f);
 
     int radix2Exp = 12;
     int slideLength = (1 << radix2Exp) / 4;

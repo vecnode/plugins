@@ -69,25 +69,32 @@ public:
     {
       std::strncpy(mText, text, sizeof(mText));
       mText[sizeof(mText) - 1] = '\0';
-      mAnalyzing = false;
+      mBusy = false;
       SetDirty(false);
     }
   }
 
-  void SetAnalyzing()
+  void SetBusy(const char* message)
   {
-    if (!mAnalyzing || std::strcmp(mText, "Analyzing...") != 0)
+    if (!message)
+      message = "Working...";
+
+    if (!mBusy || std::strcmp(mText, message) != 0)
     {
-      std::strncpy(mText, "Analyzing...", sizeof(mText));
+      std::strncpy(mText, message, sizeof(mText));
       mText[sizeof(mText) - 1] = '\0';
-      mAnalyzing = true;
+      mBusy = true;
       SetDirty(false);
     }
   }
+
+  void SetAnalyzing() { SetBusy("Detecting..."); }
+
+  void SetProcessing() { SetBusy("Processing pitch..."); }
 
   void Draw(IGraphics& g) override
   {
-    const IColor& color = mAnalyzing ? mMutedColor : mTextColor;
+    const IColor& color = mBusy ? mMutedColor : mTextColor;
     const IText textStyle(15.f, color, "Roboto-Regular", EAlign::Near, EVAlign::Middle);
     g.DrawText(textStyle, mText, mRECT);
   }
@@ -95,7 +102,7 @@ public:
 private:
   IColor mTextColor;
   IColor mMutedColor;
-  bool mAnalyzing = false;
+  bool mBusy = false;
   char mText[40] = {};
 };
 

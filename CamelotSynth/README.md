@@ -1,153 +1,146 @@
 # CamelotSynth
 
-Embedded-sample player built on iPlug2. Real-time audio runs in `ProcessBlock`; the editor is a fixed-layout IGraphics UI with transport, a Camelot note circle, gain control, and waveform.
+Embedded-sample player for iPlug2 (VST3). Playback, gain, and metering run on the **audio thread**; note detection and pitch shifting run on a **background worker**. The editor stays responsive because no heavy MIR work runs in `ProcessBlock`, `OnParamChange`, or the IGraphics paint path.
 
-## Plugin structure
+## Features
+
+| Feature | Implementation |
+|---------|----------------|
+| Sample playback | Embedded WAV → `SampleBuffer` → `SamplePlayer` |
+| Transport | Sample-accurate play / pause / stop / seek via hidden meta parameters |
+| Waveform | 1024-point peak envelope; playhead overlay synced on `OnIdle` |
+| Note detect | audioFlux **PitchYIN** on a worker thread |
+| Pitch +1 | audioFlux offline **pitchShift** (+1 semitone); atomic buffer swap at block boundary |
+
+## Thread model
+
+Three execution contexts cooperate without blocking each other:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  UI (IGraphics + OnIdle ~60 Hz)                                 │
+│  • Paint controls, meter display                                │
+│  • ProcessPendingOfflineJobs — snapshot copy + queue worker     │
+│  • ApplyOfflineWorkerUiUpdates — labels, waveform, stage swap   │
+└───────────────┬───────────────────────────────┬─────────────────┘
+                │ hidden meta params (O(1))      │ StageProcessedBuffer
+                ▼                                │ (vectors + atomic flag)
+┌───────────────────────────┐    ┌──────────────▼──────────────────┐
+│  Audio (ProcessBlock)      │    │  Worker (OfflineSampleWorker)    │
+│  • ApplyPendingSwapIfReady │    │  • PitchYIN detect               │
+│  • Mix sample + gain       │    │  • pitchShift +1 semitone        │
+│  • Peak meter              │    │  • Never touches IGraphics       │
+└───────────────────────────┘    └──────────────────────────────────┘
+```
+
+| Context | Allowed work | Forbidden |
+|---------|--------------|-----------|
+| `ProcessBlock` | Mixing, smoothing, atomic buffer swap | audioFlux, heap churn, locks, file I/O |
+| `OnParamChange` | Schedule transport; set atomic request flags | Full-buffer copies, MIR |
+| `OnIdle` | Snapshot capture, UI updates, staging processed audio | Blocking on worker (`join`, `wait`) |
+| Worker thread | audioFlux YIN / pitchShift on snapshot copy | Plugin UI, `ProcessBlock` |
+
+**Rule:** `SampleProcessSnapshot::Capture` runs on **OnIdle only** — never on the audio thread.
+
+## User workflow
+
+1. **Play** the embedded sample (transport row).
+2. **Detect Note** — label shows `Note: D · Octave 5` (example); reference MIDI stored for pitch jobs.
+3. **+1** — sample is shifted up one semitone (D → E); waveform and label update; playback uses the new buffer after the next block boundary.
+
+Buttons disable while the worker is busy. Pending clicks are retried on the next `OnIdle` tick when the worker becomes idle.
+
+## Source layout
 
 ```
 CamelotSynth/
-├── CamelotSynth.h / .cpp     Plugin entry — params, messages, DSP, OnIdle, OnUIOpen
-├── CamelotSynthEditor.h      Thin include → src/editor/Attach.h
-├── config.h                  Dimensions, bundle IDs, embedded resource names
-├── CMakeLists.txt            iPlug2 target + third_party/audioFlux link
-├── resources/
-│   ├── audio/                Embedded WAV (copied from ../assets/ at configure time)
-│   └── fonts/
+├── CamelotSynth.h / .cpp     Params, ProcessBlock, OnIdle, offline job orchestration
+├── config.h                  Dimensions, bundle IDs, embedded WAV resource name
+├── CMakeLists.txt            iPlug2 target + audioFlux static link
 └── src/
-    ├── analysis/             Offline MIR on the loaded sample (not real-time)
-    │   ├── SampleNoteDetector.h    PitchYIN fundamental → note name
-    │   ├── SamplePitchProcessor.h  Offline +N semitone shift (audioFlux pitchShift)
-    │   └── OfflineSampleWorker.h   Background worker; never blocks DSP/UI
-    ├── dsp/                  Real-time audio (no IGraphics)
-    │   ├── SampleBuffer.h    Decode embedded WAV; hold interleaved channel pointers
-    │   ├── SamplePlayer.h    Play / pause / stop / scheduled seek; dip-through-silence
-    │   ├── SampleTransport.h Buffer + player facade; sample-accurate transport/seek
-    │   └── OutputLimiter.h   Output peak limiting
-    ├── model/                Derived, non-real-time display data
-    │   └── WaveformEnvelope.h  Min/max peak buckets for waveform drawing
-    ├── ui/
-    │   ├── bridge/
-    │   │   ├── UiPlayheadBridge.h   DSP → editor sync flags (OnIdle)
-    │   │   └── UiPaintPolicy.h      Windows full-surface paint policy
-    │   └── controls/
-    │       ├── WaveformControl.h
-    │       ├── PlayheadOverlayControl.h
-    │       ├── GainKnobControl.h
-    │       ├── CamelotCircleControl.h
-    │       ├── SamplerSectionControl.h
-    │       └── SamplerFooterControl.h
-    └── editor/
-        ├── Layout.h          Row-based region computation from plugin bounds
-        ├── Styles.h          Panel colours and IVStyle presets
-        └── Attach.h          Control wiring and paint-policy install
+    ├── analysis/             Offline MIR (worker thread only)
+    │   ├── SampleNoteDetector.h     PitchYIN → DetectedNote
+    │   ├── SamplePitchProcessor.h   +N semitone via pitchShiftObj_pitchShift
+    │   ├── SampleProcessSnapshot.h  Float snapshot for worker (OnIdle only)
+    │   └── OfflineSampleWorker.h    Job queue + condition variable worker
+    ├── dsp/                  Real-time audio
+    │   ├── SampleBuffer.h    Embedded WAV decode + AssignFromFloat
+    │   ├── SamplePlayer.h    Transport, seek crossfade, playhead
+    │   └── SampleTransport.h Playback facade + pending buffer swap
+    ├── model/
+    │   └── WaveformEnvelope.h
+    ├── ui/                   IGraphics controls + paint policy
+    └── editor/               Layout.h, Styles.h, Attach.h
 ```
 
-See `src/ARCHITECTURE.md` for threading, transport/seek behaviour, and Windows rendering notes.
+See [`src/ARCHITECTURE.md`](src/ARCHITECTURE.md) for transport/seek de-clicking, Windows paint policy, and module dependency rules.
 
-## UI layout (row-based)
+## UI layout
 
-Regions are computed in `Layout.h` using fixed **row heights** and a shared `RowLayout` helper that places cells left-to-right (fixed width or fractional share, remainder for the last column). Attach only wires controls into named cells — no ad-hoc pixel math in `Attach.h`.
+Row-based regions from `Layout.h` (`RowLayout` helper — no ad-hoc pixel math in `Attach.h`).
 
-| Row | Height | Cells (left → right) |
-|-----|--------|----------------------|
-| Tab bar | 40 px | Logo badge |
-| Transport | 56 px | Start · Pause · Stop (compact, left-aligned) |
-| Middle | flex | Camelot circle + gain knob |
-| Wave title | 22 px | “Sampler” |
-| Wave plot | 50% of wave body | Waveform + playhead |
-| Wave footer | 50% of wave body | Row 1: Detect Note · **Note: …** · Length: …s |
-| | | Row 2: **+1** (pitch up one semitone, under Detect) |
+| Row | Contents |
+|-----|----------|
+| Tab bar | Logo badge |
+| Transport | Start · Pause · Stop |
+| Middle | Camelot circle + gain knob |
+| Wave title | “Sampler” |
+| Wave plot | Waveform + playhead overlay |
+| Footer row 1 | Detect Note · **Note: …** · Length |
+| Footer row 2 | **+1** (under Detect) |
 
-Compact button size: `100×44` design base at `0.5` scale → **50×22** px (transport and Detect Note).
+## Offline analysis (audioFlux)
 
-## Note detection (audioFlux PitchYIN)
-
-Triggered by **Detect Note**. Analysis runs on a **dedicated worker thread** — `ProcessBlock` and the UI message loop are never blocked.
-
-### Threading
-
-```
-UI click → kParamTrigDetectNote → OnParamChange (O(1) queue only)
-                                        ↓
-                              OfflineSampleWorker
-                                        ↓
-                              OnIdle → SyncOfflineWorkerState → footer label
-```
-
-| Thread | Work |
-|--------|------|
-| Audio (`ProcessBlock`) | Sample playback, gain, metering; **atomic buffer swap** at block start when pitch job completes |
-| Audio/UI (`OnParamChange`) | Queue detect/pitch jobs; copy snapshot already prepared at load |
-| Worker | YIN detect or audioFlux pitch shift (+1 semitone) |
-| UI (`OnIdle`) | Poll result, update label/waveform, enable/disable buttons |
-
-Mono/stereo snapshot is built once when the embedded WAV loads (`RebuildProcessSnapshot`). The worker reads that immutable copy — no races with playback.
-
-### Algorithm (detect)
+### Note detection (PitchYIN)
 
 | Step | Detail |
 |------|--------|
-| Library | [audioFlux](https://github.com/libAudioFlux/audioFlux) `mir/_pitch_yin.h` |
-| Method | **YIN** — difference function + cumulative mean normalized difference; parabolic trough interpolation |
-| Region | Middle **75%** of file (skip 12.5% attack/release tails) |
-| Window | `radix2Exp=12` → FFT 4096; `slideLength=1024`; `autoLength=2048` |
-| Range | 27–2000 Hz; YIN threshold **0.12** |
-| Gating | Per-frame RMS + YIN confidence (`minArr`); discard weak frames |
-| Aggregation | Weighted **MIDI histogram** (±1 semitone refine) → robust fundamental for pads/chords |
-| Output | `Note: D · Octave 5` (12-TET, A4=440); MIDI note stored as reference for pitch jobs |
+| API | `mir/_pitch_yin.h` |
+| Region | Middle **75%** of file (skip attack/release tails) |
+| Window | FFT 4096 (`radix2Exp=12`), slide 1024 |
+| Range | 27–2000 Hz; threshold **0.12** |
+| Output | Weighted MIDI histogram → `Note: D · Octave 5` |
 
-Reference: de Cheveigné & Kawahara, *YIN, a fundamental frequency estimator for speech and music*, JASA 2002.
+Reference: de Cheveigné & Kawahara, *YIN* (JASA 2002).
 
-## Pitch +1 (offline process, real-time playback)
+### Pitch +1 (offline pitchShift)
 
-The **+1** button (footer row 2, under Detect) shifts the loaded sample **up one semitone** using the detected note as reference (e.g. D Octave 5 → E Octave 5). audioFlux `pitchShiftObj_pitchShift` is **batch/offline** (phase vocoder + time-stretch + resample), so heavy work never runs in `ProcessBlock`.
+| Step | Detail |
+|------|--------|
+| API | `mir/pitchShift_algorithm.h` — phase vocoder + time-stretch + resample |
+| Input | Stereo snapshot + `mReferenceNote` from detect |
+| Output | Processed L/R staged to `SampleTransport`; label transposed +1 semitone |
+| RT handoff | `StageProcessedBuffer` (OnIdle) → `ApplyPendingSwapIfReady` (ProcessBlock start) |
 
-### Flow
-
-```
-Detect Note → mReferenceNote (MIDI + label)
-+1 click    → save playhead norm → queue PitchUpOne on worker
-Worker      → SamplePitchProcessor::ShiftBySemitones(+1) on L/R
-OnIdle      → rebuild waveform envelope, StageProcessedBuffer(), update label
-ProcessBlock → ApplyPendingSwapIfReady() swaps sample buffer at block boundary (playhead preserved)
-```
-
-| Constraint | Detail |
-|------------|--------|
-| Enabled when | Detect succeeded (`mReferenceNote.valid`) and worker idle |
-| Disabled while | Worker busy (detect or pitch) |
-| RT safety | Worker writes to staging buffer; DSP only atomically swaps pointers at block start |
-
-### Planned follow-ups
-
-- Map `DetectedNote` → Camelot circle block highlight
-- Real-time tracking while playing (separate low-latency path; offline detect stays on worker)
-- Additional semitone steps (−1, +12, etc.) using the same worker + swap pattern
+audioFlux pitch shift is **batch/offline** by design. Real-time pitch would require a separate low-latency algorithm (not used here).
 
 ## Libraries
 
 | Library | Location | Role |
 |---------|----------|------|
-| [iPlug2](https://github.com/iPlug2/iPlug2) | Sibling `../iPlug2` | Plugin framework, VST3 host API, IGraphics UI |
-| [audioFlux](https://github.com/libAudioFlux/audioFlux) | `../third_party/audioFlux` | PitchYIN detect + offline pitch shift (C API) |
+| [iPlug2](https://github.com/iPlug2/iPlug2) | Sibling `../iPlug2` | VST3 framework, IGraphics, parameter scheduling |
+| [audioFlux](https://github.com/libAudioFlux/audioFlux) | `../third_party/audioFlux` | PitchYIN + offline pitchShift (C API, static lib) |
 
-### Third-party setup (once)
-
-audioFlux upstream sources are fetched, not committed:
+### Third-party setup
 
 ```powershell
 .\scripts\setup-third-party.ps1
 ```
 
-Pinned version: `third_party/audioFlux/VERSION` (currently **0.1.9**).
+Pinned: `third_party/audioFlux/VERSION` (**0.1.9**). MSVC builds apply a local `exp2f` workaround in the audioFlux CMake wrapper (static CRT / iPlug2 `/MT`).
 
-## Build
+## Build & install
 
 ```powershell
 .\scripts\setup-third-party.ps1
 .\scripts\build.ps1 -Plugin CamelotSynth -Format vst3 -Config Release -Install
 ```
 
-Output: `CamelotSynth/build/out/CamelotSynth.vst3/`
+Output: `CamelotSynth/build/out/CamelotSynth.vst3/`  
+Install: `%LOCALAPPDATA%\Programs\Common\VST3\CamelotSynth.vst3` (close the host before reinstalling).
 
-Install target: `%LOCALAPPDATA%\Programs\Common\VST3\CamelotSynth.vst3` (close the host before reinstalling).
+## Planned extensions
+
+- Highlight detected note on the Camelot circle
+- Additional semitone steps (−1, +12) via the same worker + swap pattern
+- Real-time pitch tracking while playing (separate RT path; offline jobs unchanged)

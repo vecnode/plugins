@@ -3,7 +3,6 @@
 // Plugin entry — implementation modules under src/ (see src/ARCHITECTURE.md).
 #include "IPlug_include_in_plug_hdr.h"
 #include "IControls.h"
-#include <vector>
 
 const int kNumPresets = 1;
 
@@ -19,14 +18,6 @@ enum EParams
   kNumParams
 };
 
-#if IPLUG_DSP
-#include "SampleTransport.h"
-#include "Smoothers.h"
-#include "WaveformEnvelope.h"
-#include "UiPlayheadBridge.h"
-#include "OfflineSampleWorker.h"
-#endif
-
 enum EControlTags
 {
   kCtrlTagMeter = 0,
@@ -38,6 +29,16 @@ enum EControlTags
   kCtrlTagPitchUpOne = 6,
   kNumCtrlTags
 };
+
+#if IPLUG_DSP
+#include "SampleTransport.h"
+#include "Smoothers.h"
+#include "WaveformEnvelope.h"
+#include "UiPlayheadBridge.h"
+#include "OfflineSampleWorker.h"
+
+#include <atomic>
+#endif
 
 using namespace iplug;
 using namespace igraphics;
@@ -60,11 +61,14 @@ public:
   void OnReset() override;
   void OnParamChange(int paramIdx, EParamSource source, int sampleOffset) override;
   void OnIdle() override;
+
 private:
   void LoadEmbeddedSample();
   void RebuildProcessSnapshot();
   void ResetTransportTrigger(int paramIdx);
   void SyncOfflineWorkerState();
+  void ProcessPendingOfflineJobs();
+  void ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics);
 
   SampleTransport mSampleTransport;
   WaveformEnvelope mWaveformEnvelope;
@@ -72,6 +76,8 @@ private:
   OfflineSampleWorker mOfflineWorker;
   DetectedNote mReferenceNote;
   float mPitchRequestPlayheadNorm = 0.f;
+  std::atomic<bool> mPendingDetectRequest {false};
+  std::atomic<bool> mPendingPitchRequest {false};
   IPeakAvgSender<2> mMeterSender;
   LogParamSmooth<sample, 1> mGainSmoother;
 #endif

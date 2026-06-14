@@ -3,6 +3,7 @@
 #include "WaveformControl.h"
 #include "UiPaintPolicy.h"
 #include "SampleBuffer.h"
+#include "SampleProcessSnapshot.h"
 #include "IPlug_include_in_plug_src.h"
 
 namespace
@@ -106,96 +107,132 @@ void CamelotSynth::SyncOfflineWorkerState()
 #if IPLUG_EDITOR
   if (auto* pGraphics = GetUI())
   {
-    const bool workerBusy = mOfflineWorker.IsBusy();
-    const bool hasReference = mReferenceNote.valid;
+    ProcessPendingOfflineJobs();
+    ApplyOfflineWorkerUiUpdates(pGraphics);
+  }
+#else
+  ProcessPendingOfflineJobs();
+#endif
+}
 
-    if (auto* pPitchButton = pGraphics->GetControlWithTag(kCtrlTagPitchUpOne))
-    {
-      pPitchButton->SetDisabled(workerBusy || !hasReference);
-      ::igraphics::RequestControlRepaint(pPitchButton);
-    }
+void CamelotSynth::ProcessPendingOfflineJobs()
+{
+  if (mOfflineWorker.IsBusy())
+    return;
 
-    if (auto* pDetectButton = pGraphics->GetControlWithTag(kCtrlTagDetectNote))
-    {
-      pDetectButton->SetDisabled(workerBusy);
-      ::igraphics::RequestControlRepaint(pDetectButton);
-    }
+  if (mPendingDetectRequest.exchange(false))
+  {
+    if (!mSampleTransport.IsSampleLoaded())
+      LoadEmbeddedSample();
 
-    OfflineSampleWorker::Phase phase = OfflineSampleWorker::Phase::Idle;
-    DetectedNote detectNote;
-    if (mOfflineWorker.ConsumeDetectUpdate(phase, detectNote))
+    SampleProcessSnapshot::Capture(mSampleTransport.GetBuffer(), mOfflineWorker);
+    mOfflineWorker.RequestDetect();
+    return;
+  }
+
+  if (mPendingPitchRequest.exchange(false) && mReferenceNote.valid)
+  {
+    SampleProcessSnapshot::Capture(mSampleTransport.GetBuffer(), mOfflineWorker);
+    mOfflineWorker.RequestPitchUpOne(mReferenceNote);
+  }
+}
+
+void CamelotSynth::ApplyOfflineWorkerUiUpdates(IGraphics* pGraphics)
+{
+#if IPLUG_EDITOR
+  const bool workerBusy = mOfflineWorker.IsBusy();
+  const bool hasReference = mReferenceNote.valid;
+
+  if (auto* pPitchButton = pGraphics->GetControlWithTag(kCtrlTagPitchUpOne))
+  {
+    pPitchButton->SetDisabled(workerBusy || !hasReference);
+    ::igraphics::RequestControlRepaint(pPitchButton);
+  }
+
+  if (auto* pDetectButton = pGraphics->GetControlWithTag(kCtrlTagDetectNote))
+  {
+    pDetectButton->SetDisabled(workerBusy);
+    ::igraphics::RequestControlRepaint(pDetectButton);
+  }
+
+  OfflineSampleWorker::Phase phase = OfflineSampleWorker::Phase::Idle;
+  DetectedNote detectNote;
+  if (mOfflineWorker.ConsumeDetectUpdate(phase, detectNote))
+  {
+    if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
     {
-      if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
+      auto* pLabel = pNote->As<::igraphics::DetectedNoteLabelControl>();
+      switch (phase)
       {
-        auto* pLabel = pNote->As<::igraphics::DetectedNoteLabelControl>();
-        switch (phase)
-        {
-          case OfflineSampleWorker::Phase::Queued:
-          case OfflineSampleWorker::Phase::Running:
-            pLabel->SetAnalyzing();
-            break;
-          case OfflineSampleWorker::Phase::Succeeded:
-            mReferenceNote = detectNote;
-            pLabel->SetText(detectNote.text);
-            break;
-          case OfflineSampleWorker::Phase::Failed:
-            mReferenceNote = {};
+        case OfflineSampleWorker::Phase::Queued:
+        case OfflineSampleWorker::Phase::Running:
+          pLabel->SetAnalyzing();
+          break;
+        case OfflineSampleWorker::Phase::Succeeded:
+          mReferenceNote = detectNote;
+          pLabel->SetText(detectNote.text);
+          break;
+        case OfflineSampleWorker::Phase::Failed:
+          mReferenceNote = {};
+          pLabel->SetText("Note: --");
+          break;
+        default:
+          break;
+      }
+      ::igraphics::RequestControlRepaint(pNote);
+    }
+  }
+
+  OfflineSampleWorker::PitchResult pitchResult;
+  if (mOfflineWorker.ConsumePitchUpdate(phase, pitchResult))
+  {
+    if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
+    {
+      auto* pLabel = pNote->As<::igraphics::DetectedNoteLabelControl>();
+      switch (phase)
+      {
+        case OfflineSampleWorker::Phase::Queued:
+        case OfflineSampleWorker::Phase::Running:
+          pLabel->SetProcessing();
+          break;
+        case OfflineSampleWorker::Phase::Succeeded:
+          if (pitchResult.ok)
+          {
+            const double hostRate = mSampleTransport.GetBuffer().GetHostSampleRate();
+            SampleBuffer preview;
+            preview.AssignFromFloat(pitchResult.left, pitchResult.right, hostRate);
+            mWaveformEnvelope.BuildFrom(preview, kWaveformPoints);
+            mReferenceNote = pitchResult.note;
+
+            SampleProcessSnapshot::CaptureChannels(pitchResult.left.data(),
+                                                   pitchResult.right.data(),
+                                                   static_cast<int>(pitchResult.left.size()),
+                                                   static_cast<int>(std::lround(hostRate)),
+                                                   mOfflineWorker);
+
+            mSampleTransport.StageProcessedBuffer(std::move(pitchResult.left),
+                                                  std::move(pitchResult.right),
+                                                  hostRate,
+                                                  mPitchRequestPlayheadNorm);
+            mUiPlayheadBridge.MarkPlayheadDirty();
+            pLabel->SetText(mReferenceNote.text);
+          }
+          else
+          {
             pLabel->SetText("Note: --");
-            break;
-          default:
-            break;
-        }
-        ::igraphics::RequestControlRepaint(pNote);
+          }
+          break;
+        case OfflineSampleWorker::Phase::Failed:
+          pLabel->SetText(mReferenceNote.valid ? mReferenceNote.text : "Note: --");
+          break;
+        default:
+          break;
       }
-    }
-
-    OfflineSampleWorker::PitchResult pitchResult;
-    if (mOfflineWorker.ConsumePitchUpdate(phase, pitchResult))
-    {
-      if (auto* pNote = pGraphics->GetControlWithTag(kCtrlTagDetectedNote))
-      {
-        auto* pLabel = pNote->As<::igraphics::DetectedNoteLabelControl>();
-        switch (phase)
-        {
-          case OfflineSampleWorker::Phase::Queued:
-          case OfflineSampleWorker::Phase::Running:
-            pLabel->SetAnalyzing();
-            break;
-          case OfflineSampleWorker::Phase::Succeeded:
-            if (pitchResult.ok)
-            {
-              SampleBuffer preview;
-              preview.AssignFromFloat(pitchResult.left,
-                                      pitchResult.right,
-                                      mSampleTransport.GetBuffer().GetHostSampleRate());
-              mWaveformEnvelope.BuildFrom(preview, kWaveformPoints);
-              mReferenceNote = pitchResult.note;
-
-              mSampleTransport.StageProcessedBuffer(std::move(pitchResult.left),
-                                                    std::move(pitchResult.right),
-                                                    preview.GetHostSampleRate(),
-                                                    mPitchRequestPlayheadNorm);
-              RebuildProcessSnapshot();
-              mUiPlayheadBridge.MarkPlayheadDirty();
-              pLabel->SetText(mReferenceNote.text);
-            }
-            else
-            {
-              pLabel->SetText("Note: --");
-            }
-            break;
-          case OfflineSampleWorker::Phase::Failed:
-            pLabel->SetText(mReferenceNote.valid ? mReferenceNote.text : "Note: --");
-            break;
-          default:
-            break;
-        }
-        ::igraphics::RequestControlRepaint(pNote);
-      }
+      ::igraphics::RequestControlRepaint(pNote);
     }
   }
 #else
-  (void) 0;
+  (void) pGraphics;
 #endif
 }
 
@@ -206,6 +243,8 @@ void CamelotSynth::OnReset()
   mGainSmoother.SetValue(static_cast<sample>(GetParam(kParamGain)->Value() / 100.));
   mSampleTransport.SetSampleRate(GetSampleRate());
   mReferenceNote = {};
+  mPendingDetectRequest.store(false, std::memory_order_release);
+  mPendingPitchRequest.store(false, std::memory_order_release);
   LoadEmbeddedSample();
 }
 
@@ -220,30 +259,7 @@ void CamelotSynth::LoadEmbeddedSample()
 
 void CamelotSynth::RebuildProcessSnapshot()
 {
-  const SampleBuffer& buffer = mSampleTransport.GetBuffer();
-  if (!buffer.IsLoaded())
-  {
-    mOfflineWorker.SetSnapshot({});
-    return;
-  }
-
-  OfflineSampleWorker::Snapshot snapshot;
-  const int length = buffer.GetLength();
-  snapshot.sampleRate = static_cast<int>(std::lround(buffer.GetHostSampleRate()));
-  snapshot.mono.resize(static_cast<size_t>(length));
-  snapshot.left.resize(static_cast<size_t>(length));
-  snapshot.right.resize(static_cast<size_t>(length));
-
-  const sample* left = buffer.GetLeft();
-  const sample* right = buffer.GetRight();
-  for (int i = 0; i < length; ++i)
-  {
-    snapshot.left[static_cast<size_t>(i)] = static_cast<float>(left[i]);
-    snapshot.right[static_cast<size_t>(i)] = static_cast<float>(right[i]);
-    snapshot.mono[static_cast<size_t>(i)] = static_cast<float>((left[i] + right[i]) * 0.5);
-  }
-
-  mOfflineWorker.SetSnapshot(std::move(snapshot));
+  SampleProcessSnapshot::Capture(mSampleTransport.GetBuffer(), mOfflineWorker);
 }
 
 void CamelotSynth::ResetTransportTrigger(int paramIdx)
@@ -295,14 +311,7 @@ void CamelotSynth::OnParamChange(int paramIdx, EParamSource source, int sampleOf
 
     case kParamTrigDetectNote:
       if (GetParam(kParamTrigDetectNote)->Bool())
-      {
-        if (!mSampleTransport.IsSampleLoaded())
-          LoadEmbeddedSample();
-        else
-          RebuildProcessSnapshot();
-
-        mOfflineWorker.RequestDetect();
-      }
+        mPendingDetectRequest.store(true, std::memory_order_release);
       ResetTransportTrigger(kParamTrigDetectNote);
       break;
 
@@ -310,8 +319,7 @@ void CamelotSynth::OnParamChange(int paramIdx, EParamSource source, int sampleOf
       if (GetParam(kParamTrigPitchUpOne)->Bool() && mReferenceNote.valid)
       {
         mPitchRequestPlayheadNorm = mSampleTransport.GetPlayheadNorm();
-        RebuildProcessSnapshot();
-        mOfflineWorker.RequestPitchUpOne(mReferenceNote);
+        mPendingPitchRequest.store(true, std::memory_order_release);
       }
       ResetTransportTrigger(kParamTrigPitchUpOne);
       break;

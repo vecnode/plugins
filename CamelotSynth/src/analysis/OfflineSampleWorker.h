@@ -12,7 +12,15 @@
 
 BEGIN_IPLUG_NAMESPACE
 
-/** Single background worker for offline MIR and pitch processing — never blocks ProcessBlock. */
+/**
+ * Single background worker for offline MIR and pitch processing.
+ *
+ * Contract:
+ *  - Request* methods are O(1): queue state and wake the worker thread.
+ *  - Heavy work (audioFlux YIN, pitch shift) runs only in WorkerLoop().
+ *  - ProcessBlock never waits on this class; SampleTransport swaps buffers atomically.
+ *  - OnIdle polls Consume*Update() to refresh the editor.
+ */
 class OfflineSampleWorker
 {
 public:

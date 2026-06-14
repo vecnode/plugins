@@ -14,6 +14,11 @@ CamelotSynth/
 ├── CamelotSynthEditor.h      Thin include → src/editor/Attach.h
 ├── config.h                  Dimensions, bundle IDs, embedded resource names
 └── src/
+    ├── analysis/             Offline MIR (worker thread only)
+    │   ├── SampleNoteDetector.h
+    │   ├── SamplePitchProcessor.h
+    │   ├── SampleProcessSnapshot.h
+    │   └── OfflineSampleWorker.h
     ├── dsp/                  Real-time audio (no IGraphics)
     │   ├── SampleBuffer.h    Decode embedded WAV; hold interleaved channel pointers
     │   ├── SamplePlayer.h    Play / pause / stop / scheduled seek; dip-through-silence
@@ -61,23 +66,32 @@ Control z-order in `Attach.h`: background panel → meter → chrome → note ci
 [Embedded WAV]
       │
       ▼
- SampleBuffer ──OnReset / LoadEmbedded──► SamplePlayer
+ SampleBuffer ──OnReset / LoadEmbedded──► SamplePlayer ◄── atomic swap (pitch result)
       │                                        │
       ▼                                        ▼
 WaveformEnvelope                      ProcessBlock → outputs
  (1024 peak buckets)                         │
       │                                 IPeakAvgSender → meter
       │                                        │
-      └──────────── OnIdle (~50 Hz) ───────────┘
+      └──────────── OnIdle (~60 Hz) ───────────┘
                          │
-              UiPlayheadBridge
+              UiPlayheadBridge + OfflineSampleWorker UI sync
                          │
-         WaveformTrackControl + PlayheadOverlayControl
+         WaveformTrackControl + footer (detect / +1 / note label)
+                         │
+              OfflineSampleWorker (background thread)
+                         │
+              audioFlux PitchYIN / pitchShift on SampleProcessSnapshot
 ```
 
-- **DSP thread:** `ProcessBlock` reads gain (smoothed), mixes the sample into outputs, sends meter peaks.
-- **UI thread:** `OnIdle` transmits meter data, pushes envelope updates when the sample reloads, and syncs playhead position while playing or after transport/seek.
-- **Cross-thread UI → DSP:** hidden meta parameters (`kParamTrigPlay`, `kParamTrigPause`, `kParamTrigStop`, `kParamSeek`) via `SendParameterValueFromUI`. `OnParamChange` schedules transport and seek with the host-provided `sampleOffset` so events land sample-accurately inside the current `ProcessBlock`. Avoid `SendArbitraryMsgFromUI` for transport — host messaging can add large latency.
+- **Audio thread (`ProcessBlock`):** mix sample, apply gain, peak meter; at block start, `SampleTransport::ApplyPendingSwapIfReady()` may replace the playback buffer (O(1) flag + assign). No audioFlux, no full-buffer copies.
+- **Audio thread (`OnParamChange`):** schedule transport/seek with `sampleOffset`; for detect/+1, only set `std::atomic` request flags and save playhead norm — **O(1)**.
+- **UI timer (`OnIdle`):** meter transmit, playhead sync, `ProcessPendingOfflineJobs()` (snapshot capture + worker queue), `ApplyOfflineWorkerUiUpdates()` (labels, waveform, `StageProcessedBuffer`). Snapshot capture must not run in `OnParamChange`.
+- **Worker thread:** `OfflineSampleWorker` runs PitchYIN or pitchShift on an immutable snapshot copy; results polled by `OnIdle`.
+
+Cross-thread UI → DSP for transport: hidden meta parameters (`kParamTrigPlay`, etc.) via `SendParameterValueFromUI`. Avoid `SendArbitraryMsgFromUI` for transport — host messaging can add large latency.
+
+Cross-thread worker → DSP for pitch: `StageProcessedBuffer` (UI/OnIdle) sets staging vectors + `mSwapPending`; `ApplyPendingSwapIfReady` (ProcessBlock) commits to `SampleBuffer` and silent-seeks to preserved playhead norm.
 
 `UiPlayheadBridge` holds two flags:
 
@@ -220,7 +234,8 @@ Reference implementations: `GainKnobControl`, `WaveformTrackControl`, `PlayheadO
 
 | Layer | May include | Must not |
 |-------|-------------|----------|
-| `dsp/` | iPlug DSP headers | IGraphics |
+| `analysis/` | audioFlux C API, `dsp/SampleBuffer.h` (types only) | IGraphics, `ProcessBlock` |
+| `dsp/` | iPlug DSP headers | IGraphics, audioFlux |
 | `model/` | `dsp/` | IGraphics |
 | `ui/bridge/` | IGraphics, `dsp/` (bridge headers only) | Plugin class |
 | `ui/controls/` | IControls, `ui/bridge/` | Plugin class |

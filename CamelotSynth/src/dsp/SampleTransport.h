@@ -12,9 +12,12 @@ BEGIN_IPLUG_NAMESPACE
 /**
  * Embedded sample playback engine (buffer + player).
  *
+ * Real-time contract:
+ *  - ProcessBlock only mixes audio and may apply a pre-built buffer swap (O(1) flag + memcpy).
+ *  - Offline pitch processing never runs here; see OfflineSampleWorker + StageProcessedBuffer.
+ *
  * Transport is driven by hidden trigger parameters scheduled with sample-accurate
  * offsets in OnParamChange (VST3 applies these in the same process() call as audio).
- * Avoid SendArbitraryMsgFromUI for transport — host messaging can add large latency.
  */
 class SampleTransport
 {
