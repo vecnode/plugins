@@ -8,8 +8,6 @@ namespace
 {
 constexpr double kGainSmoothMs = 20.;
 constexpr int kHiddenTransportFlags = IParam::kFlagMeta | IParam::kFlagCannotAutomate;
-constexpr int kStateMagic = 0x434D5354; // 'CMST'
-constexpr int kStateVersion = 1;
 }
 
 CamelotSynth::CamelotSynth(const InstanceInfo& info)
@@ -210,42 +208,6 @@ void CamelotSynth::OnReset()
   mEngine.SetPitchMode(GetParam(kParamPitchMode)->Int() == 1 ? audioagent::PitchMode::Live
                                                                : audioagent::PitchMode::Quality);
   LoadEmbeddedSample();
-}
-
-bool CamelotSynth::SerializeState(IByteChunk& chunk) const
-{
-  chunk.Put(&kStateMagic);
-  chunk.Put(&kStateVersion);
-  const int hpf = GetParam(kParamHPF)->Int();
-  const int pitchMode = GetParam(kParamPitchMode)->Int();
-  chunk.Put(&hpf);
-  chunk.Put(&pitchMode);
-  return true;
-}
-
-int CamelotSynth::UnserializeState(const IByteChunk& chunk, int startPos)
-{
-  int magic = 0;
-  int version = 0;
-  startPos = chunk.Get(&magic, startPos);
-  if (magic != kStateMagic)
-    return startPos;
-
-  startPos = chunk.Get(&version, startPos);
-  if (version < 1)
-    return startPos;
-
-  int hpf = 0;
-  int pitchMode = 0;
-  startPos = chunk.Get(&hpf, startPos);
-  startPos = chunk.Get(&pitchMode, startPos);
-
-  GetParam(kParamHPF)->Set(hpf);
-  GetParam(kParamPitchMode)->Set(pitchMode);
-  mEngine.SetHPFEnabled(hpf != 0);
-  mEngine.SetPitchMode(pitchMode == 1 ? audioagent::PitchMode::Live : audioagent::PitchMode::Quality);
-
-  return startPos;
 }
 
 void CamelotSynth::LoadEmbeddedSample()

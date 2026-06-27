@@ -1,7 +1,7 @@
 #pragma once
 
-#include "PitchStreamCache.h"
-#include "PitchStreamWorker.h"
+#include "analysis/PitchStreamCache.h"
+#include "analysis/PitchStreamWorker.h"
 #include "SampleBuffer.h"
 
 #include <algorithm>
