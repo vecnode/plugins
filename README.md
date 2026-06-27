@@ -84,3 +84,7 @@ If a DAW has the plugin loaded, install stages to `*.vst3.pending` — close the
 ```
 
 Link `audioagent` from your plugin `CMakeLists.txt` (see [audioagent README](src/audioagent/README.md)).
+
+## License
+
+This repository's own code is released under the [MIT License](LICENSE) (© 2026 vecnode). Third-party dependencies keep their own licenses — notably [iPlug2](https://github.com/iPlug2/iPlug2) (sibling SDK) and the vendored [audioFlux](https://github.com/libAudioFlux/audioFlux) under `third_party/`.
