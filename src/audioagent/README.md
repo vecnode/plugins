@@ -38,15 +38,17 @@ All of this runs on the host audio thread inside `SamplerEngine::ProcessBlock` �
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for transport/seek de-clicking and module dependency rules.
 
-## Making this production-grade RT DSP
+## RT DSP guarantees (implemented)
 
-Current strengths: clear thread split, de-clicked transport, limiter on output. Gaps to close for a professional library:
+| Property | How |
+|----------|-----|
+| **Composable chain** | `ProcessChain` + `IProcessStage`, assembled in `SamplePlayer::PrepareProcessChain` (HPF → gain → limiter) |
+| **Scheduler placement** | Pitch worker kicked from `SamplerEngine::Tick()`, never from `ProcessBlock` |
+| **Cache safety** | `PitchStreamCache` uses per-block atomic ready flags + release fence before a block is readable |
+| **Two pitch modes** | Quality read-ahead for DJ-style ±1 steps; low-latency `RTPitchShifter` (`PitchMode::Live`) for live performance |
+| **RT audit** | `scripts/check-rt-audio.ps1` greps the audio path for forbidden APIs |
 
-1. **Composable chain** — stages are wired inside `SamplePlayer` today; target is `ProcessChain` + `IProcessStage` (see [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md)).
-2. **Scheduler placement** — pitch worker should be kicked from `Tick()`, not every `ProcessBlock`.
-3. **Cache safety** — block commits from the worker must not race with audio reads (block-ready protocol or double buffering).
-4. **Two pitch modes** — keep quality read-ahead for DJ-style +1 steps; add optional low-latency `RTPitchShifter` for live performance.
-5. **RT audit** — CI checks for forbidden APIs on the audio path; optional render regression tests.
+Still open (see [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md) "Future work"): headless render benchmark (`scripts/benchmark-render.ps1` is a stub), a TSan CI target, and AVX/NEON `SimdUtils` implementations.
 
 ## iPlug2 integration
 
