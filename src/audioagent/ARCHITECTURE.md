@@ -185,27 +185,31 @@ Transport play/pause/stop uses 12 ms equal-power fade (`kTransportFadeMs`).
 
 ## Real-time processing chain
 
-Today all RT stages are embedded in `SamplePlayer::ProcessBlock` (per-sample loop):
+`SamplePlayer` renders the source (dry or `PitchStreamPipeline`) plus seek/transport crossfades into pre-allocated scratch buffers, then runs a block-based `ProcessChain` of `IProcessStage` objects (`SamplePlayer::PrepareProcessChain`):
 
 ```
 source (dry | PitchStreamPipeline)
-  → seek / transport crossfade
-  → gain (host LogParamSmooth)
-  → OutputLimiter
+  → seek / transport crossfade        (per-sample, in SamplePlayer)
+  → scratch buffers + DenormalFlush / SimdUtils::FlushDenormalsBlock
+  → ProcessChain.ProcessBlock:
+        HPFStage      (optional, kParamHPF)
+        GainStage     (host LogParamSmooth)
+        LimiterStage  (wraps OutputLimiter, always on)
   → outputs
 ```
 
-There is no separate `ProcessChain` type yet. New effects should eventually implement `IProcessStage` (see [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md)).
+Add a new effect by implementing `IProcessStage` and inserting it in `PrepareProcessChain` (see [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md)).
 
 ### RT contract checklist
 
 | Rule | Current |
 |------|---------|
 | No audioFlux in `ProcessBlock` | Yes |
-| No mutex on audio thread | Yes (but `KickScheduler` notifies worker every block — move to `Tick()`) |
-| No heap alloc in hot path | Mostly yes; audit `PitchStreamPipeline` bind at load only |
-| Pitch cache: worker write vs audio read | **Needs block-ready protocol** — worker may commit while audio reads same indices |
+| No mutex on audio thread | Yes — pitch worker is kicked from `SamplerEngine::Tick()`, not `ProcessBlock` |
+| No heap alloc in hot path | Yes — scratch buffers and chain stages bound at load/reset |
+| Pitch cache: worker write vs audio read | Per-block atomic ready flags + release fence before a block is marked readable (`PitchStreamCache`) |
 | Documented chain order | Yes (this section + CamelotSynth README) |
+| Enforced in CI | `scripts/check-rt-audio.ps1` greps the audio path for forbidden APIs |
 
 ---
 

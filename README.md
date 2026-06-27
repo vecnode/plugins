@@ -28,14 +28,18 @@ See [src/audioagent/ARCHITECTURE.md](src/audioagent/ARCHITECTURE.md) for threadi
 
 ```
 Dev/
-├── iPlug2/
+├── iPlug2/                  # sibling SDK (not in this repo)
 └── plugins/
+    ├── build_all.bat        # build audioagent + every plugin
+    ├── install_all.bat      # install built bundles into the user VST3/CLAP folder
     ├── src/
-    │   └── audioagent/       # shared DSP + MIR + Camelot wheel library
-    ├── CamelotSynth/       # iPlug2 plugin (uses audioagent)
-    ├── assets/             # shared audio (gitignored)
-    └── scripts/
+    │   └── audioagent/      # shared DSP + MIR + Camelot wheel library
+    ├── CamelotSynth/        # iPlug2 plugin (uses audioagent)
+    ├── assets/              # shared audio (gitignored)
+    └── scripts/             # build.ps1, install-plugin.ps1, setup, RT-audit
 ```
+
+For agent/contributor guidance (the iPlug2 surface, RT-audio rules, known issues) see [AGENTS.md](AGENTS.md).
 
 ## Setup (once)
 
@@ -45,7 +49,16 @@ Dev/
 code plugins.code-workspace
 ```
 
-## Build and test in Reaper
+## Build and install everything
+
+```bat
+build_all.bat            :: build every plugin (vst3, Release) — audioagent is compiled into each
+install_all.bat          :: install the built VST3s into %LOCALAPPDATA%\Programs\Common\VST3
+```
+
+Both accept optional arguments: `build_all.bat [Format] [Config]` (default `vst3 Release`) and `install_all.bat [Format]` (default `vst3`). A "plugin" is any top-level folder containing `config.h`. `audioagent` is a header-only INTERFACE library, so it has no separate build step — it is compiled into each plugin.
+
+### Single plugin
 
 ```powershell
 $p = "CamelotSynth"
@@ -53,7 +66,7 @@ $p = "CamelotSynth"
 .\scripts\install-plugin.ps1 -Plugin $p -Format vst3
 ```
 
-If Reaper has the plugin loaded, install stages to `CamelotSynth.vst3.pending` — close Reaper, then run `install-plugin.ps1` again. Build output: `CamelotSynth/build/out/CamelotSynth.vst3/`.
+If a DAW has the plugin loaded, install stages to `*.vst3.pending` — close the DAW, then run `install_all.bat` (or `install-plugin.ps1`) again. Build output: `<Plugin>/build/out/<Plugin>.vst3/`.
 
 ## Documentation
 

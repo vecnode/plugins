@@ -1,0 +1,27 @@
+name: rt-audit
+
+# Static guard for the real-time audio path: fails if forbidden APIs (locks,
+# heap churn, audioFlux objects) appear in the ProcessBlock headers, or if the
+# pitch scheduler is kicked from ProcessBlock instead of Tick().
+
+on:
+  push:
+    paths:
+      - "src/audioagent/**"
+      - "scripts/check-rt-audio.ps1"
+      - ".github/workflows/rt-audit.yml"
+  pull_request:
+    paths:
+      - "src/audioagent/**"
+      - "scripts/check-rt-audio.ps1"
+      - ".github/workflows/rt-audit.yml"
+  workflow_dispatch:
+
+jobs:
+  rt-audit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: RT audio audit
+        shell: pwsh
+        run: ./scripts/check-rt-audio.ps1
