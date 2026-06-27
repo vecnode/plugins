@@ -60,8 +60,6 @@ public:
   void OnReset() override;
   void OnParamChange(int paramIdx, EParamSource source, int sampleOffset) override;
   void OnIdle() override;
-  bool SerializeState(IByteChunk& chunk) const override;
-  int UnserializeState(const IByteChunk& chunk, int startPos) override;
 
 private:
   void LoadEmbeddedSample();

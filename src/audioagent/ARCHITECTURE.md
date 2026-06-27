@@ -24,11 +24,21 @@ src/audioagent/
 │   ├── SamplePlayer.h
 │   ├── SampleTransport.h
 │   ├── PitchStreamPipeline.h
-│   └── OutputLimiter.h
+│   ├── OutputLimiter.h
+│   ├── ProcessChain.h        IProcessStage + fixed-capacity chain
+│   ├── GainStage.h           Smoothed gain stage
+│   ├── HPFStage.h            30 Hz one-pole HPF (atomic bypass)
+│   ├── LimiterStage.h        OutputLimiter as a chain stage
+│   ├── DenormalFlush.h       Subnormal flush (avoids WDL denormal.h shadow)
+│   ├── RTPitchShifter.h      Live-mode grain pitch shifter
+│   ├── PitchMode.h           Quality vs Live
+│   └── SimdUtils.h           Scalar SIMD hooks
 ├── model/
 │   └── WaveformEnvelope.h
-└── camelot/
-    └── WheelLayout.h         Pure geometry + hit-test (no IGraphics)
+├── camelot/
+│   └── WheelLayout.h         Pure geometry + hit-test (no IGraphics)
+└── platform/
+    └── ResourceLoader.h      Windows embedded-resource load (iPlug IPlugPaths)
 ```
 
 **Plugin shell (CamelotSynth):** `CamelotSynth.h/.cpp` — params, meter, `OnIdle` UI sync. UI under `CamelotSynth/src/ui/` and `CamelotSynth/src/editor/`.

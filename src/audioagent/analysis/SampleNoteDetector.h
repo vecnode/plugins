@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SampleBuffer.h"
+#include "dsp/SampleBuffer.h"
 #include "mir/_pitch_yin.h"
 
 #include <algorithm>

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "OfflineSampleWorker.h"
-#include "SampleBuffer.h"
+#include "dsp/SampleBuffer.h"
 
 #include <cmath>
 

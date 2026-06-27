@@ -16,14 +16,13 @@ endif()
 
 add_library(audioagent INTERFACE)
 
+# Only the parent (for "audioagent/..." includes) and the library root (for
+# "dsp/...", "analysis/...", etc. prefixed includes) are on the path. Per-subdir
+# entries were removed so leaf header names (e.g. DenormalFlush.h) can't shadow
+# WDL/system headers; same-directory includes still resolve via the C++ rule.
 target_include_directories(audioagent INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/..
   ${CMAKE_CURRENT_SOURCE_DIR}
-  ${CMAKE_CURRENT_SOURCE_DIR}/dsp
-  ${CMAKE_CURRENT_SOURCE_DIR}/analysis
-  ${CMAKE_CURRENT_SOURCE_DIR}/model
-  ${CMAKE_CURRENT_SOURCE_DIR}/camelot
-  ${CMAKE_CURRENT_SOURCE_DIR}/platform
   ${IPLUG2_DIR}/IPlug
   ${IPLUG2_DIR}/WDL
 )
