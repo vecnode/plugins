@@ -3,19 +3,27 @@
 #include "audioagent/iplug_bridge.h"
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 
 namespace audioagent
 {
 
 /**
- * Streaming pitch shifter for Live mode (±1 semitone).
- * Always outputs audio — dry passthrough during warmup; smoothed ratio changes.
+ * Real-time pitch shifter for Live mode (±1 semitone), audio-thread safe.
+ *
+ * Time-domain two-tap crossfading delay line: the input is written into a ring
+ * at rate 1 while a read offset drifts at rate (1 - ratio). Two read taps half a
+ * window apart are blended with complementary triangular weights, so the moment a
+ * tap laps the window boundary it carries zero weight — no periodic click. Always
+ * outputs audio: dry passthrough during warmup, smoothed ratio changes.
+ *
+ * Memory is O(1) in the file length — a fixed ring, independent of sample size.
+ * Latency ≈ kWindow/2 samples (~21 ms at 48 kHz).
  */
 class RTPitchShifter
 {
 public:
   static constexpr int kRingSize = 4096;
+  static constexpr int kWindow = kRingSize / 2; // crossfade period / tap span
   static constexpr float kRatioSmooth = 0.004f;
 
   void Reset(double sampleRate)
@@ -25,7 +33,7 @@ public:
     mRatio = 1.f;
     mTargetRatio = 1.f;
     mWritePos = 0;
-    mReadPhase = 0.f;
+    mPhase = 0.f;
     mPrimed = 0;
     std::fill(std::begin(mRingL), std::end(mRingL), 0.f);
     std::fill(std::begin(mRingR), std::end(mRingR), 0.f);
@@ -42,15 +50,16 @@ public:
 
   void ProcessSample(sample inL, sample inR, sample& outL, sample& outR)
   {
-    mRingL[static_cast<size_t>(mWritePos)] = inL;
-    mRingR[static_cast<size_t>(mWritePos)] = inR;
+    const int writeHead = mWritePos;
+    mRingL[static_cast<size_t>(writeHead)] = static_cast<float>(inL);
+    mRingR[static_cast<size_t>(writeHead)] = static_cast<float>(inR);
     mWritePos = (mWritePos + 1) % kRingSize;
 
     if (mSemitones == 0)
     {
       mRatio = 1.f;
       mTargetRatio = 1.f;
-      mReadPhase = static_cast<float>(mWritePos);
+      mPhase = 0.f;
       outL = inL;
       outR = inR;
       return;
@@ -58,33 +67,50 @@ public:
 
     mRatio += (mTargetRatio - mRatio) * kRatioSmooth;
 
-    if (mPrimed < kRingSize / 2)
+    if (mPrimed < kWindow)
     {
       ++mPrimed;
+      mPhase = 0.f;
       outL = inL;
       outR = inR;
-      mReadPhase = static_cast<float>(mWritePos);
       return;
     }
 
-    mReadPhase += mRatio;
-    while (mReadPhase >= static_cast<float>(kRingSize))
-      mReadPhase -= static_cast<float>(kRingSize);
-    while (mReadPhase < 0.f)
-      mReadPhase += static_cast<float>(kRingSize);
+    // Read offset (distance behind the write head) drifts at (1 - ratio):
+    // ratio > 1 (pitch up) shrinks the offset, reading newer samples faster.
+    mPhase += (1.f - mRatio);
+    while (mPhase >= static_cast<float>(kWindow))
+      mPhase -= static_cast<float>(kWindow);
+    while (mPhase < 0.f)
+      mPhase += static_cast<float>(kWindow);
 
-    const sample pitchedL = ReadRing(mRingL, mReadPhase);
-    const sample pitchedR = ReadRing(mRingR, mReadPhase);
+    const float offA = mPhase;
+    float offB = mPhase + static_cast<float>(kWindow) * 0.5f;
+    if (offB >= static_cast<float>(kWindow))
+      offB -= static_cast<float>(kWindow);
 
-    // Light blend with dry keeps transients stable and avoids boundary clicks.
-    constexpr sample kDryBlend = 0.12f;
-    outL = pitchedL * (1.f - kDryBlend) + inL * kDryBlend;
-    outR = pitchedR * (1.f - kDryBlend) + inR * kDryBlend;
+    // Triangular crossfade weights (peak at window centre); they sum to 1.
+    const float wA = 1.f - std::fabs(2.f * (offA / static_cast<float>(kWindow)) - 1.f);
+    const float wB = 1.f - wA;
+
+    const float headPos = static_cast<float>(writeHead);
+    const float aL = ReadRing(mRingL, headPos - offA);
+    const float aR = ReadRing(mRingR, headPos - offA);
+    const float bL = ReadRing(mRingL, headPos - offB);
+    const float bR = ReadRing(mRingR, headPos - offB);
+
+    outL = static_cast<sample>(aL * wA + bL * wB);
+    outR = static_cast<sample>(aR * wA + bR * wB);
   }
 
 private:
-  static sample ReadRing(const float* ring, float position)
+  static float ReadRing(const float* ring, float position)
   {
+    while (position < 0.f)
+      position += static_cast<float>(kRingSize);
+    while (position >= static_cast<float>(kRingSize))
+      position -= static_cast<float>(kRingSize);
+
     const int i0 = static_cast<int>(position) % kRingSize;
     const int i1 = (i0 + 1) % kRingSize;
     const float frac = position - std::floor(position);
@@ -94,7 +120,7 @@ private:
   float mRingL[kRingSize] {};
   float mRingR[kRingSize] {};
   int mWritePos = 0;
-  float mReadPhase = 0.f;
+  float mPhase = 0.f;
   float mRatio = 1.f;
   float mTargetRatio = 1.f;
   int mSemitones = 0;

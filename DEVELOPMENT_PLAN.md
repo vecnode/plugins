@@ -27,7 +27,7 @@ New modules under `src/audioagent/dsp/`:
 | `LimiterStage.h` | Output limiter wrapper |
 | `HPFStage.h` | 30 Hz one-pole HPF (atomic bypass) |
 | `DenormalFlush.h` | Subnormal flush (not named `Denormal.h` — avoids shadowing WDL `denormal.h`) |
-| `RTPitchShifter.h` | Live-mode grain pitch shifter |
+| `RTPitchShifter.h` | Live-mode two-tap crossfading delay-line pitch shifter (±1 st, O(1) memory) |
 | `PitchMode.h` | `Quality` vs `Live` |
 | `SimdUtils.h` | Scalar SIMD hooks |
 
@@ -45,7 +45,7 @@ New modules under `src/audioagent/dsp/`:
 | `kParamPitchMode` | Quality (read-ahead) vs Live (RTPitchShifter) |
 | `kParamTrigPitchDownOne` / `Up` / `Reset` | ±1 semitone, reset to detected note |
 
-Preset chunk: HPF + pitch mode via `SerializeState`.
+State persists as plain parameters (`PLUG_DOES_STATE_CHUNKS 0`); HPF and pitch mode are re-applied to the engine in `OnParamChange` / `OnReset`.
 
 ### Phase 3 UI
 
@@ -60,7 +60,6 @@ Preset chunk: HPF + pitch mode via `SerializeState`.
 | SIMD hooks | `dsp/SimdUtils.h` |
 | RT CI grep | `scripts/check-rt-audio.ps1` + `.github/workflows/rt-audit.yml` |
 | Benchmark placeholder | `scripts/benchmark-render.ps1` |
-| TSan CI placeholder | `rt-audit.yml` job |
 
 ---
 
