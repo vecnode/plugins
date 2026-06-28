@@ -24,7 +24,11 @@ All of this runs on the host audio thread inside `SamplerEngine::ProcessBlock` �
 | 4 | Gain | Host passes `LogParamSmooth` |
 | 5 | Limiter | `LimiterStage` — soft knee + stereo peak limiter |
 
-**Pitch +1 / −1** latch at exactly ±1 from the detected reference (no stacking). Use **Reset** to return to the detected note. `RTPitchShifter` runs on the audio thread with smoothed mix — always outputs audio.
+**Pitch +1 / −1** latch at exactly ±1 from the detected reference (no stacking). Use **Reset** to return to the detected note. Two engines, selected by `kParamPitchMode`: **Quality** (background audioFlux read-ahead) and **Live** (`RTPitchShifter`, a two-tap crossfading delay line on the audio thread, ~21 ms latency, always outputs audio). See [ARCHITECTURE.md](ARCHITECTURE.md#pitch-shifting--two-modes).
+
+### Sample size in memory
+
+The whole file is decoded to the host rate and held in RAM (`sample` = `double` → 16 B/stereo frame); there is no disk streaming. Live pitch adds **no** per-frame memory (fixed ring); Quality pitch roughly doubles it (full-length pitched cache). Rough x64 limits at 48 kHz — Quality ≈ 11 min/GB, Live/no-pitch ≈ 22 min/GB; hard ceilings are the ~4 GB WAV `data` chunk and the `int` frame count (≈12 h). Full breakdown: [ARCHITECTURE.md → Memory and maximum sample length](ARCHITECTURE.md#memory-and-maximum-sample-length).
 
 ## Thread model
 

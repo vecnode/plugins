@@ -66,17 +66,30 @@ WaveformEnvelope     │              PitchStreamWorker (audioFlux chunks)
 - **Audio thread:** `SamplePlayer` reads dry or pitched cache via `PitchStreamPipeline`; dry buffer is never replaced.
 - **Audio thread (param scheduling):** transport + `BeginPitchStream` + atomic detect flag only.
 - **UI timer:** kick pitch scheduler, detect worker queue; +1 updates label immediately via `pitchLabelChanged`.
-- **PitchStreamWorker:** audioFlux `pitchShift` on 4096-sample windows ahead of playhead.
+- **PitchStreamWorker:** audioFlux `pitchShift` on **~10 s blocks** ahead of the playhead (Quality mode).
 - **OfflineSampleWorker:** PitchYIN detect only.
 
-### Real-time pitch (+1) — block read-ahead pipeline
+## Pitch shifting — two modes
+
+`kParamPitchMode` selects how ±1 semitone is realised. Both are driven by the same **−1 / +1 / Reset** controls and both latch at exactly ±1 from the detected reference note (no stacking — `ApplyPitchSemitones` and `SetLivePitchSemitones` clamp to `[-1, +1]`).
+
+| | **Quality** (`PitchMode::Quality`, default) | **Live** (`PitchMode::Live`) |
+| --- | --- | --- |
+| Engine | audioFlux `pitchShift` on background `PitchStreamWorker` | `RTPitchShifter` on the audio thread |
+| Latency to pitched audio | Dry until the block is ready (block fills in the background) | Immediate (smoothed wet/dry ramp) |
+| Algorithm | Phase-vocoder quality, offline-grade | Two-tap crossfading delay line (time-domain) |
+| Per-tap latency | n/a | ≈ `kWindow/2` = 1024 samples (~21 ms @ 48 kHz) |
+| Memory | Full-length pitched cache (see below) | **O(1)** — fixed 4096-sample ring, independent of file length |
+| Best for | DJ-style fixed transpose | Live performance / instant response |
+
+### Quality mode — block read-ahead pipeline
 
 | Property | Value |
 | -------- | ----- |
-| Algorithm | audioFlux `pitchShift` on **~10 s offline blocks** (`PitchStreamWorker`) |
-| Read-ahead | Worker keeps **2 blocks (~20 s)** ahead of the playhead |
+| Algorithm | audioFlux `pitchShift` on **~10 s blocks** (`PitchStreamWorker`) |
+| Read-ahead | Worker keeps **2 blocks (~20 s)** ahead of the playhead (`kReadAheadBlocks`) |
 | Playback | Dry until the current block is ready, then continuous pitched audio for the block |
-| Range | +1 per press, cumulative to +12 semitones (always shifted from dry) |
+| Range | ±1 semitone, latched from the detected note (always shifted from dry) |
 | Paused | Worker fills blocks while stopped; pitched audio on next play when ready |
 
 ```
@@ -92,7 +105,11 @@ SamplePlayer
           PitchStreamWorker (background thread, 10 s blocks)
 ```
 
-Full-buffer swap (`ReplaceBufferKeepingTransport`) is retained for optional offline bake only — live +1 uses the stream cache.
+Full-buffer swap (`ReplaceBufferKeepingTransport`) is retained for optional offline bake only — live ±1 uses the stream cache.
+
+### Live mode — `RTPitchShifter`
+
+A self-contained time-domain shifter run per sample in `SamplePlayer::RenderPlaybackSample` (no worker, no allocation). Input is written into a 4096-sample ring while a read offset drifts at `(1 - ratio)`; two read taps half a window apart are blended with complementary triangular weights, so a tap carries zero weight exactly when it laps the window boundary — no periodic click. It always outputs audio (dry passthrough during warmup) and the wet/dry mix is smoothed by `SamplePlayer` (`mPitchMix`). Because the ring is fixed-size, **Live mode adds no per-sample memory** regardless of how long the loaded file is.
 
 ---
 
@@ -213,11 +230,52 @@ Add a new effect by implementing `IProcessStage` and inserting it in `PreparePro
 
 ---
 
+## Memory and maximum sample length
+
+The whole sample is decoded and resampled to the host rate, then held in RAM for the lifetime of the plugin (`SampleBuffer`). `sample` is `double` (iPlug2 `SAMPLE_TYPE_DOUBLE`), so the dry buffer costs **16 bytes per stereo frame**. There is no disk streaming — file length is bounded by memory, not I/O.
+
+### Resident cost per stereo frame (host rate)
+
+| Buffer | When | Bytes/frame |
+|--------|------|-------------|
+| Dry `SampleBuffer` (`double` L/R) | always | 16 |
+| `PitchStreamCache` pitched copy (`float` L/R, full length) | Quality pitch engaged | +8 |
+| `PitchStreamWorker` dry copy (`float` L/R, full length) | Quality pitch engaged | +8 |
+| `RTPitchShifter` ring (fixed 4096) | Live pitch engaged | ~0 (~32 KB total, **not** per-frame) |
+
+- **No pitch / Live mode:** ~16 B/frame resident. **Live pitch adds no per-frame memory** — its ring is fixed size.
+- **Quality mode active:** ~32 B/frame resident, peaking ~40 B/frame during a worker burst (a transient full-length `float` copy plus the ~10 s block + audioFlux scratch).
+- **One-time load peak** (`SampleBuffer::DecodeAndResample`): the embedded WAV image + source-rate temp (`double`) + host-rate output (`double`) coexist briefly — budget for roughly the source size plus `16 × (srcFrames + dstFrames)` bytes while decoding.
+
+### Practical maximum (x64 build)
+
+Sample-buffer budget only — add the one-time decode peak and the rest of the host/plugin footprint on top. Durations at 48 kHz:
+
+| RAM for sample buffers | Quality mode (~32 B/frame) | Live / no pitch (~16 B/frame) |
+|------------------------|----------------------------|-------------------------------|
+| 256 MB | ~2.8 min | ~5.6 min |
+| 512 MB | ~5.6 min | ~11 min |
+| 1 GB | ~11 min | ~22 min |
+| 2 GB | ~22 min | ~44 min |
+
+(44.1 kHz is ~9% longer per byte. Multiply both columns by ~1.09.)
+
+### Hard format/type ceilings (RAM usually bites first)
+
+| Limit | Value | Reason |
+|-------|-------|--------|
+| WAV `data` chunk | ~4 GB (≈6.2 h of 16-bit stereo @ 48 k) | `pcmBytes` read as `uint32` — a RIFF/WAV format limit |
+| Frame count | 2,147,483,647 frames (≈12.4 h @ 48 k) | `mLength` / `numFrames` are `int` |
+| Address space | not the limit | builds are x64 (`build.ps1 -A x64`) — physical RAM binds first |
+
+To go beyond an embedded WAV (e.g. a host-decoded file or a longer/other format), feed PCM through `SampleBuffer::AssignFromFloat`; the same per-frame budgets apply.
+
+---
+
 ## Extension notes
 
-- New semitone steps: adjust `SamplerEngine::RequestPitchUpOne` / add `RequestPitchDownOne`
-- Composable chain: `ProcessChain` + stages — see [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md)
-- Live RT pitch: add `RTPitchShifter` alongside read-ahead pipeline
+- Wider transpose range: relax the `[-1, +1]` clamp in `SamplerEngine::ApplyPitchSemitones` and `SamplePlayer::SetLivePitchSemitones` (and add UI), then extend `RTPitchShifter::SetSemitones`
+- New chain stages: implement `IProcessStage` and insert in `SamplePlayer::PrepareProcessChain` — see [DEVELOPMENT_PLAN.md](../../DEVELOPMENT_PLAN.md)
 - Offline bake (optional): re-enable worker pitchShift when stopped for export-quality freeze
 - Non-iPlug hosts: replace `LoadEmbedded` with `AssignFromFloat` on a decoded buffer
 - Highlight detected note on wheel: map `DetectedNote.midiNote` → `WheelLayout::HitTestBlockIndex` in the plugin UI
